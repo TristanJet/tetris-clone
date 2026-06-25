@@ -11,6 +11,10 @@ const line_thick = 2;
 const screen_grid_x_off = (screen_size - (grid_width * cell_size)) / 2;
 const screen_grid_y_off = (screen_size - (grid_height * cell_size)) / 2;
 
+const fall_speed = 1; //cells per second
+var time_since_last_fell: f32 = 0;
+var current: Current = undefined;
+
 //Rows are represented by u16
 var grid: [grid_height]u16 = @splat(0);
 
@@ -33,10 +37,34 @@ const Tetr = enum(u16) {
             if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
                 const row = shift / n_rows;
                 const col = shift % n_rows;
-                // fillCell(x + col, y + row);
                 grid[y + row] |= @as(u16, 1) << @intCast(x + col);
             }
         }
+    }
+
+    fn clear(self: Tetr, x: u8, y: u8) void {
+        var shift: u8 = 0;
+        while (shift < size) : (shift += 1) {
+            if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
+                const row = shift / n_rows;
+                const col = shift % n_rows;
+                grid[y + row] ^= @as(u16, 1) << @intCast(x + col);
+            }
+        }
+    }
+};
+
+const Current = struct {
+    kind: Tetr,
+    x_pos: u8,
+    y_pos: u8,
+
+    fn fall(self: *Current) void {
+        if (time_since_last_fell < 1) return;
+        time_since_last_fell = 0;
+        self.kind.clear(self.x_pos, self.y_pos);
+        self.y_pos += 1;
+        self.kind.translate(self.x_pos, self.y_pos);
     }
 };
 
@@ -48,15 +76,18 @@ pub fn main(init: std.process.Init) !void {
     rl.setTargetFPS(60);
     rl.setWindowPosition(0, 0);
 
+    current = .{
+        .kind = .O,
+        .x_pos = 0,
+        .y_pos = 0,
+    };
+    current.kind.translate(current.x_pos, current.y_pos);
+
     while (!rl.windowShouldClose()) {
-        const o = Tetr.O;
-        const s = Tetr.S;
-        const z = Tetr.Z;
-        const i = Tetr.I;
-        o.translate(grid_width / 2 - 1, grid_height / 2 - 1);
-        s.translate(0, 0);
-        z.translate(7, 18);
-        i.translate(0, 4);
+        const dt = rl.getFrameTime();
+        time_since_last_fell += dt;
+
+        current.fall();
 
         rl.beginDrawing();
         defer rl.endDrawing();
