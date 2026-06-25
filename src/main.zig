@@ -1,6 +1,8 @@
 const std = @import("std");
 const rl = @import("raylib");
 const assert = std.debug.assert;
+const testing = std.testing;
+const print = std.debug.print;
 
 const screen_size = 720;
 const grid_height = 20;
@@ -11,12 +13,15 @@ const line_thick = 2;
 const screen_grid_x_off = (screen_size - (grid_width * cell_size)) / 2;
 const screen_grid_y_off = (screen_size - (grid_height * cell_size)) / 2;
 
-const fall_speed = 1; //cells per second
+const fall_tick = 0.1; //fall every x seconds
 var time_since_last_fell: f32 = 0;
 var current: Current = undefined;
 
+var prng: std.Random = undefined;
+
 //Rows are represented by u16
-var grid: [grid_height]u16 = @splat(0);
+//big endian
+var grid: [grid_height + 1]u10 = @splat(0);
 
 //each tetromino is 4x4 grid -- represented by a u16
 //      1100
@@ -24,6 +29,25 @@ var grid: [grid_height]u16 = @splat(0);
 //      0000
 //      0000
 const Tetr = enum(u16) {
+    const Row = struct {
+        bits: u10,
+        height: u4,
+    };
+
+    const Iterator = struct {
+        row: u4 = 0,
+        fn next(self: *Iterator, tetr: Tetr) ?Row {
+            while (self.row < n_rows) {
+                const r = self.row;
+                self.row += 1;
+                const nibble: u16 = (@intFromEnum(tetr) >> @intCast((n_rows - 1 - r) * 4)) & 0b1111;
+                if (nibble != 0) {
+                    return .{ .bits = @intCast(nibble), .height = r + 1 };
+                }
+            }
+            return null;
+        }
+    };
     const size = 16;
     const n_rows = size / 4;
     O = 0b1100_1100_0000_0000,
@@ -37,7 +61,7 @@ const Tetr = enum(u16) {
             if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
                 const row = shift / n_rows;
                 const col = shift % n_rows;
-                grid[y + row] |= @as(u16, 1) << @intCast(x + col);
+                grid[y + row] |= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
             }
         }
     }
@@ -48,7 +72,7 @@ const Tetr = enum(u16) {
             if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
                 const row = shift / n_rows;
                 const col = shift % n_rows;
-                grid[y + row] ^= @as(u16, 1) << @intCast(x + col);
+                grid[y + row] ^= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
             }
         }
     }
@@ -56,38 +80,75 @@ const Tetr = enum(u16) {
 
 const Current = struct {
     kind: Tetr,
-    x_pos: u8,
+    x_pos: u4,
     y_pos: u8,
 
-    fn fall(self: *Current) void {
-        if (time_since_last_fell < 1) return;
-        time_since_last_fell = 0;
-        self.kind.clear(self.x_pos, self.y_pos);
-        self.y_pos += 1;
-        self.kind.translate(self.x_pos, self.y_pos);
+    fn new(rng: std.Random) Current {
+        return .{
+            .kind = rng.enumValue(Tetr),
+            .x_pos = 0,
+            .y_pos = 0,
+        };
+    }
+
+    fn checkDownCollision(self: Current, next_y: u8) bool {
+        var it = Tetr.Iterator{};
+        while (it.next(self.kind)) |row| {
+            if (next_y + row.height > grid_height) return true;
+            const shape_mask = @as(u10, row.bits) << @intCast(grid_width - 4 - self.x_pos);
+            if (grid[next_y + row.height - 1] & shape_mask != 0) return true;
+        }
+        return false;
     }
 };
 
-pub fn main(init: std.process.Init) !void {
-    _ = init;
+test "row iterator" {
+    const o: Tetr = .O;
+    const i: Tetr = .I;
+    const s: Tetr = .S;
+    // const z: Tetr = .Z;
+    var it = Tetr.Iterator{};
+    try testing.expect(it.next(o).?.bits == 0b1100);
+    try testing.expect(it.next(o).?.bits == 0b1100);
+    try testing.expect(it.next(o) == null);
+    it = Tetr.Iterator{};
+    try testing.expect(it.next(i).?.bits == 0b1000);
+    try testing.expect(it.next(i).?.bits == 0b1000);
+    it = Tetr.Iterator{};
+    try testing.expect(it.next(s).?.bits == 0b0110);
+    try testing.expect(it.next(s).?.bits == 0b1100);
+    try testing.expect(it.next(s) == null);
+}
+
+pub fn main() !void {
     rl.initWindow(screen_size, screen_size, "Tetris Clone");
     defer rl.closeWindow();
 
     rl.setTargetFPS(60);
     rl.setWindowPosition(0, 0);
 
-    current = .{
-        .kind = .O,
-        .x_pos = 0,
-        .y_pos = 0,
-    };
+    var rand = std.Random.DefaultPrng.init(80085);
+    prng = rand.random();
+
+    current = .new(prng);
     current.kind.translate(current.x_pos, current.y_pos);
 
     while (!rl.windowShouldClose()) {
         const dt = rl.getFrameTime();
         time_since_last_fell += dt;
 
-        current.fall();
+        if (time_since_last_fell >= fall_tick) {
+            time_since_last_fell = 0;
+            current.kind.clear(current.x_pos, current.y_pos);
+            if (current.checkDownCollision(current.y_pos + 1)) {
+                current.kind.translate(current.x_pos, current.y_pos);
+                current = .new(prng);
+                current.kind.translate(current.x_pos, current.y_pos);
+            } else {
+                current.y_pos += 1;
+                current.kind.translate(current.x_pos, current.y_pos);
+            }
+        }
 
         rl.beginDrawing();
         defer rl.endDrawing();
@@ -140,7 +201,7 @@ fn drawGridValues() void {
     for (grid, 0..) |row, n| {
         var col: u8 = 0;
         while (col < grid_width) : (col += 1) {
-            if ((row & (@as(u16, 1) << @intCast(col))) != 0) {
+            if ((row & (@as(u10, 1) << @intCast(grid_width - 1 - col))) != 0) {
                 fillCell(col, @intCast(n));
             }
         }
