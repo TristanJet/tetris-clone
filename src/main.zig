@@ -15,12 +15,29 @@ const screen_grid_y_off = (screen_size - (grid_height * cell_size)) / 2;
 var grid: [grid_height]u16 = @splat(0);
 
 //each tetromino is 4x4 grid -- represented by a u16
+//      1100
+//      1100
 //      0000
-//      0110
-//      0110
 //      0000
 const Tetr = enum(u16) {
-    o = 0b0000_0110_0110_0000,
+    const size = 16;
+    const n_rows = size / 4;
+    O = 0b1100_1100_0000_0000,
+    S = 0b0110_1100_0000_0000,
+    Z = 0b1100_0110_0000_0000,
+    I = 0b1000_1000_1000_1000,
+
+    fn translate(self: Tetr, x: u8, y: u8) void {
+        var shift: u8 = 0;
+        while (shift < size) : (shift += 1) {
+            if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
+                const row = shift / n_rows;
+                const col = shift % n_rows;
+                // fillCell(x + col, y + row);
+                grid[y + row] |= @as(u16, 1) << @intCast(x + col);
+            }
+        }
+    }
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -28,11 +45,18 @@ pub fn main(init: std.process.Init) !void {
     rl.initWindow(screen_size, screen_size, "Tetris Clone");
     defer rl.closeWindow();
 
+    rl.setTargetFPS(60);
     rl.setWindowPosition(0, 0);
 
     while (!rl.windowShouldClose()) {
-        grid[grid_height / 2] = 0b11 << 4;
-        grid[grid_height / 2 + 1] = 0b11 << 4;
+        const o = Tetr.O;
+        const s = Tetr.S;
+        const z = Tetr.Z;
+        const i = Tetr.I;
+        o.translate(grid_width / 2 - 1, grid_height / 2 - 1);
+        s.translate(0, 0);
+        z.translate(7, 18);
+        i.translate(0, 4);
 
         rl.beginDrawing();
         defer rl.endDrawing();
@@ -81,24 +105,23 @@ fn drawGridShape() void {
     }
 }
 
-fn fillCell(x_off: u8, y_off: u8) void {
-    assert(0 < x_off and x_off <= grid_width);
-    assert(0 < y_off and y_off <= grid_height);
-    rl.drawRectangleV(
-        .init(screen_grid_x_off + (cell_size * @as(u16, x_off - 1)) + line_thick, screen_grid_y_off + (cell_size * @as(u16, y_off - 1)) + line_thick),
-        .init(cell_size - 2 * line_thick, cell_size - 2 * line_thick),
-        .white,
-    );
-}
-
 fn drawGridValues() void {
     for (grid, 0..) |row, n| {
-        var shift: u4 = 0;
-        while (shift < grid_width) : (shift += 1) {
-            if ((row >> shift) & @as(u16, 1) != 0) {
-                //fill cell + shift from the right
-                fillCell(grid_width - shift, @intCast(n + 1));
+        var col: u8 = 0;
+        while (col < grid_width) : (col += 1) {
+            if ((row & (@as(u16, 1) << @intCast(col))) != 0) {
+                fillCell(col, @intCast(n));
             }
         }
     }
+}
+
+fn fillCell(x_off: u8, y_off: u8) void {
+    assert(0 <= x_off and x_off < grid_width);
+    assert(0 <= y_off and y_off < grid_height);
+    rl.drawRectangleV(
+        .init(screen_grid_x_off + (cell_size * @as(u16, x_off)) + line_thick, screen_grid_y_off + (cell_size * @as(u16, y_off)) + line_thick),
+        .init(cell_size - 2 * line_thick, cell_size - 2 * line_thick),
+        .white,
+    );
 }
