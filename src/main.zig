@@ -187,6 +187,7 @@ const Piece = struct {
         if (self.checkDownCollision(self.y + 1)) {
             translate(self.mask(), self.x, self.y);
             self.* = .new(prng, self.x);
+            tetris();
             translate(self.mask(), self.x, self.y);
         } else {
             self.y += 1;
@@ -268,14 +269,14 @@ test "row iterator" {
     try testing.expect(it.next(s) == null);
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     rl.initWindow(screen_size, screen_size, "Tetris Clone");
     defer rl.closeWindow();
 
     rl.setTargetFPS(15);
     rl.setWindowPosition(0, 0);
 
-    var rand = std.Random.DefaultPrng.init(80085);
+    var rand = std.Random.DefaultPrng.init(@intCast(std.Io.Timestamp.now(init.io, .real).toMilliseconds()));
     prng = rand.random();
 
     current = .new(prng, 5);
@@ -321,6 +322,8 @@ pub fn main() !void {
             current.moveDown();
         }
 
+        //clear completed rows
+
         rl.beginDrawing();
         defer rl.endDrawing();
 
@@ -328,6 +331,23 @@ pub fn main() !void {
         drawGridShape();
         drawGridValues();
     }
+}
+
+fn tetris() void {
+    var i = grid.len - 1;
+    while (i > 0) : (i -= 1) {
+        while (~grid[i] == 0) {
+            grid[i] = 0;
+            shiftAll(i - 1);
+        }
+    }
+}
+
+fn shiftAll(i: usize) void {
+    if (grid[i + 1] != 0 or grid[i] == 0) return;
+    grid[i + 1] = grid[i];
+    grid[i] = 0;
+    shiftAll(i - 1);
 }
 
 fn drawGridShape() void {
