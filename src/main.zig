@@ -54,6 +54,7 @@ const Tetr = enum(u16) {
     S = 0b0110_1100_0000_0000,
     Z = 0b1100_0110_0000_0000,
     I = 0b1000_1000_1000_1000,
+    T = 0b1110_0100_0000_0000,
 
     fn translate(self: Tetr, x: u8, y: u8) void {
         var shift: u8 = 0;
@@ -138,6 +139,36 @@ const Current = struct {
         }
         return false;
     }
+
+    fn checkLeftCollision(self: Current) bool {
+        var it = Tetr.Iterator{};
+        while (it.next(self.kind)) |row| {
+            const y_row = self.y + row.height - 1;
+            const shift_i: i16 = (@as(i16, grid_width) - 4) - @as(i16, self.x);
+            const shape_mask = if (shift_i >= 0)
+                @as(u10, row.bits) << @intCast(shift_i)
+            else
+                @as(u10, row.bits) >> @intCast(-shift_i);
+            if ((shape_mask & (@as(u10, 1) << (grid_width - 1))) != 0) return true;
+            if ((grid[y_row] & (shape_mask << 1)) != 0) return true;
+        }
+        return false;
+    }
+
+    fn checkRightCollision(self: Current) bool {
+        var it = Tetr.Iterator{};
+        while (it.next(self.kind)) |row| {
+            const y_row = self.y + row.height - 1;
+            const shift_i: i16 = (@as(i16, grid_width) - 4) - @as(i16, self.x);
+            const shape_mask = if (shift_i >= 0)
+                @as(u10, row.bits) << @intCast(shift_i)
+            else
+                @as(u10, row.bits) >> @intCast(-shift_i);
+            if ((shape_mask & @as(u10, 1)) != 0) return true;
+            if ((grid[y_row] & (shape_mask >> 1)) != 0) return true;
+        }
+        return false;
+    }
 };
 
 test "row iterator" {
@@ -175,20 +206,22 @@ pub fn main() !void {
         const dt = rl.getFrameTime();
         time_since_last_fell += dt;
 
-        if (rl.isKeyDown(.left) and current.x > 0) {
+        if (rl.isKeyDown(.left) and current.x > 0) blk: {
             current.kind.clear(current.x, current.y);
+            if (current.checkLeftCollision()) {
+                current.kind.translate(current.x, current.y);
+                break :blk;
+            }
             current.x -= 1;
             current.kind.translate(current.x, current.y);
         }
         if (rl.isKeyDown(.right)) blk: {
-            const width: u10 = switch (current.kind) {
-                .O => 2,
-                .I => 1,
-                .S => 3,
-                .Z => 3,
-            };
-            if (current.x >= grid_width - width) break :blk;
+            const w = current.kind.width();
             current.kind.clear(current.x, current.y);
+            if (current.checkRightCollision() or current.x >= grid_width - w) {
+                current.kind.translate(current.x, current.y);
+                break :blk;
+            }
             current.x += 1;
             current.kind.translate(current.x, current.y);
         }
