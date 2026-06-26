@@ -56,12 +56,14 @@ const Piece = struct {
     const size = 16;
     const n_rows = size / 4;
 
-    const PieceKind = enum(u3) {
+    const PieceKind = enum {
         O,
         S,
         Z,
         I,
         T,
+        L,
+        J,
     };
 
     fn baseMask(kind: PieceKind) u16 {
@@ -71,6 +73,8 @@ const Piece = struct {
             .Z => 0b1100_0110_0000_0000,
             .I => 0b1000_1000_1000_1000,
             .T => 0b1110_0100_0000_0000,
+            .L => 0b1000_1110_0000_0000,
+            .J => 0b0010_1110_0000_0000,
         };
     }
 
@@ -245,10 +249,14 @@ test "width" {
     const i = Piece.maskFrom(.I, 0);
     const s = Piece.maskFrom(.S, 0);
     const z = Piece.maskFrom(.Z, 0);
+    const l = Piece.maskFrom(.L, 0);
+    const j = Piece.maskFrom(.J, 0);
     try testing.expect(Piece.width(o) == 2);
     try testing.expect(Piece.width(i) == 1);
     try testing.expect(Piece.width(s) == 3);
     try testing.expect(Piece.width(z) == 3);
+    try testing.expect(Piece.width(l) == 3);
+    try testing.expect(Piece.width(j) == 3);
 }
 
 test "row iterator" {
@@ -321,8 +329,6 @@ pub fn main(init: std.process.Init) !void {
             time_since_last_fell = 0;
             current.moveDown();
         }
-
-        //clear completed rows
 
         rl.beginDrawing();
         defer rl.endDrawing();
