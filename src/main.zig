@@ -76,17 +76,42 @@ const Tetr = enum(u16) {
             }
         }
     }
+
+    fn width(self: Tetr) u4 {
+        var it = Iterator{};
+        var w: u4 = 0;
+        while (it.next(self)) |row| {
+            var shift: u4 = 0;
+            while (shift < n_rows) : (shift += 1) {
+                if ((row.bits >> shift) & @as(u10, 0b1) != 0) w = @max(n_rows - shift, w);
+            }
+        }
+        return w;
+    }
 };
+
+test "width" {
+    const o: Tetr = .O;
+    const i: Tetr = .I;
+    const s: Tetr = .S;
+    const z: Tetr = .Z;
+    try testing.expect(o.width() == 2);
+    try testing.expect(i.width() == 1);
+    try testing.expect(s.width() == 3);
+    try testing.expect(z.width() == 3);
+}
 
 const Current = struct {
     kind: Tetr,
     x: u4,
     y: u8,
 
-    fn new(rng: std.Random) Current {
+    fn new(rng: std.Random, x: u4) Current {
+        const kind = rng.enumValue(Tetr);
+        const w = kind.width();
         return .{
-            .kind = rng.enumValue(Tetr),
-            .x = 0,
+            .kind = kind,
+            .x = if (x + w > grid_width) x - kind.width() else x,
             .y = 0,
         };
     }
@@ -95,7 +120,7 @@ const Current = struct {
         self.kind.clear(self.x, self.y);
         if (self.checkDownCollision(self.y + 1)) {
             self.kind.translate(self.x, self.y);
-            self.* = .new(prng);
+            self.* = .new(prng, self.x);
             self.kind.translate(self.x, self.y);
         } else {
             self.y += 1;
@@ -143,7 +168,7 @@ pub fn main() !void {
     var rand = std.Random.DefaultPrng.init(80085);
     prng = rand.random();
 
-    current = .new(prng);
+    current = .new(prng, 5);
     current.kind.translate(current.x, current.y);
 
     while (!rl.windowShouldClose()) {
@@ -155,7 +180,14 @@ pub fn main() !void {
             current.x -= 1;
             current.kind.translate(current.x, current.y);
         }
-        if (rl.isKeyDown(.right) and current.x < grid_width - 1) {
+        if (rl.isKeyDown(.right)) blk: {
+            const width: u10 = switch (current.kind) {
+                .O => 2,
+                .I => 1,
+                .S => 3,
+                .Z => 3,
+            };
+            if (current.x >= grid_width - width) break :blk;
             current.kind.clear(current.x, current.y);
             current.x += 1;
             current.kind.translate(current.x, current.y);
