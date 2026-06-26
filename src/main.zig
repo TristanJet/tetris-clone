@@ -13,7 +13,7 @@ const line_thick = 2;
 const screen_grid_x_off = (screen_size - (grid_width * cell_size)) / 2;
 const screen_grid_y_off = (screen_size - (grid_height * cell_size)) / 2;
 
-const fall_tick = 0.1; //fall every x seconds
+const fall_tick = 0.3; //fall every x seconds
 var time_since_last_fell: f32 = 0;
 var current: Current = undefined;
 
@@ -80,22 +80,35 @@ const Tetr = enum(u16) {
 
 const Current = struct {
     kind: Tetr,
-    x_pos: u4,
-    y_pos: u8,
+    x: u4,
+    y: u8,
 
     fn new(rng: std.Random) Current {
         return .{
             .kind = rng.enumValue(Tetr),
-            .x_pos = 0,
-            .y_pos = 0,
+            .x = 0,
+            .y = 0,
         };
+    }
+
+    fn moveDown(self: *Current) void {
+        self.kind.clear(self.x, self.y);
+        if (self.checkDownCollision(self.y + 1)) {
+            self.kind.translate(self.x, self.y);
+            self.* = .new(prng);
+            self.kind.translate(self.x, self.y);
+        } else {
+            self.y += 1;
+            self.kind.translate(self.x, self.y);
+        }
     }
 
     fn checkDownCollision(self: Current, next_y: u8) bool {
         var it = Tetr.Iterator{};
         while (it.next(self.kind)) |row| {
             if (next_y + row.height > grid_height) return true;
-            const shape_mask = @as(u10, row.bits) << @intCast(grid_width - 4 - self.x_pos);
+            const shift_i: i8 = (@as(i8, @intCast(grid_width)) - 4) - self.x;
+            const shape_mask = if (shift_i >= 0) @as(u10, row.bits) << @intCast(shift_i) else @as(u10, row.bits) >> @intCast(@abs(shift_i));
             if (grid[next_y + row.height - 1] & shape_mask != 0) return true;
         }
         return false;
@@ -124,30 +137,34 @@ pub fn main() !void {
     rl.initWindow(screen_size, screen_size, "Tetris Clone");
     defer rl.closeWindow();
 
-    rl.setTargetFPS(60);
+    rl.setTargetFPS(15);
     rl.setWindowPosition(0, 0);
 
     var rand = std.Random.DefaultPrng.init(80085);
     prng = rand.random();
 
     current = .new(prng);
-    current.kind.translate(current.x_pos, current.y_pos);
+    current.kind.translate(current.x, current.y);
 
     while (!rl.windowShouldClose()) {
         const dt = rl.getFrameTime();
         time_since_last_fell += dt;
 
+        if (rl.isKeyDown(.left) and current.x > 0) {
+            current.kind.clear(current.x, current.y);
+            current.x -= 1;
+            current.kind.translate(current.x, current.y);
+        }
+        if (rl.isKeyDown(.right) and current.x < grid_width - 1) {
+            current.kind.clear(current.x, current.y);
+            current.x += 1;
+            current.kind.translate(current.x, current.y);
+        }
+        if (rl.isKeyDown(.down)) current.moveDown();
+
         if (time_since_last_fell >= fall_tick) {
             time_since_last_fell = 0;
-            current.kind.clear(current.x_pos, current.y_pos);
-            if (current.checkDownCollision(current.y_pos + 1)) {
-                current.kind.translate(current.x_pos, current.y_pos);
-                current = .new(prng);
-                current.kind.translate(current.x_pos, current.y_pos);
-            } else {
-                current.y_pos += 1;
-                current.kind.translate(current.x_pos, current.y_pos);
-            }
+            current.moveDown();
         }
 
         rl.beginDrawing();
