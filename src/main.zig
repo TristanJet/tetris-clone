@@ -27,143 +27,237 @@ var grid: [grid_height]u10 = @splat(0);
 //      1100
 //      0000
 //      0000
-const Tetr = enum(u16) {
-    const Row = struct {
-        bits: u10,
-        height: u4,
-    };
-
-    const Iterator = struct {
-        index: u4 = 0,
-        fn next(self: *Iterator, tetr: Tetr) ?u4 {
-            if (self.index >= side_length) return null;
-            const nibble = tetr.indexRow(@intCast(self.index));
-            return if (nibble != 0) blk: {
-                self.index += 1;
-                break :blk nibble;
-            } else null;
-        }
-    };
+const Tetr = enum {
     const size = 16;
     const side_length = size / 4;
-    O = 0b1100_1100_0000_0000,
-    S = 0b0110_1100_0000_0000,
-    Z = 0b1100_0110_0000_0000,
-    I = 0b1000_1000_1000_1000,
-    T = 0b1110_0100_0000_0000,
-    L = 0b1000_1110_0000_0000,
-    J = 0b0010_1110_0000_0000,
+    const rot_table = RotTable.init();
+    O,
+    S,
+    Z,
+    I,
+    T,
+    L,
+    J,
 
-    fn indexRow(self: Tetr, index: u2) u4 {
-        const shift: u4 = side_length - 1 - index;
-        const nibble = (@intFromEnum(self) >> (side_length * shift)) & 0b1111;
-        return @intCast(nibble);
+    fn base(self: Tetr) u16 {
+        return switch (self) {
+            .O => 0b1100_1100_0000_0000,
+            .S => 0b0110_1100_0000_0000,
+            .Z => 0b1100_0110_0000_0000,
+            .I => 0b1000_1000_1000_1000,
+            .T => 0b1110_0100_0000_0000,
+            .L => 0b1000_1000_1100_0000,
+            .J => 0b0100_0100_1100_0000,
+        };
     }
 
-    fn translate(self: Tetr, x: u8, y: u8) void {
-        var shift: u8 = 0;
-        while (shift < size) : (shift += 1) {
-            if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
-                const row = shift / side_length;
-                const col = shift % side_length;
-                grid[y + row] |= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
-            }
-        }
-    }
-
-    fn clear(self: Tetr, x: u8, y: u8) void {
-        var shift: u8 = 0;
-        while (shift < size) : (shift += 1) {
-            if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
-                const row = shift / side_length;
-                const col = shift % side_length;
-                grid[y + row] ^= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
-            }
-        }
-    }
-
-    fn width(self: Tetr) u4 {
-        var it = Iterator{};
-        var w: u4 = 0;
-        while (it.next(self)) |row| {
-            var shift: u4 = 0;
-            while (shift < side_length) : (shift += 1) {
-                if ((row >> @intCast(shift)) & @as(u10, 0b1) != 0) w = @max(side_length - @as(u4, shift), w);
-            }
-        }
-        return w;
+    fn rotation(self: Tetr, rot_index: u2) u16 {
+        return switch (self) {
+            .O => Tetr.rot_table.O[0],
+            .I => Tetr.rot_table.I[rot_index % 2],
+            .S => Tetr.rot_table.S[rot_index],
+            .Z => Tetr.rot_table.Z[rot_index],
+            .T => Tetr.rot_table.T[rot_index],
+            .L => Tetr.rot_table.L[rot_index],
+            .J => Tetr.rot_table.J[rot_index],
+        };
     }
 };
 
+const RotTable = struct {
+    O: [1]u16,
+    I: [2]u16,
+    S: [4]u16,
+    Z: [4]u16,
+    T: [4]u16,
+    L: [4]u16,
+    J: [4]u16,
+
+    fn init() RotTable {
+        @setEvalBranchQuota(2000);
+        return .{
+            .O = uniqueRotations(1, Tetr.base(.O)),
+            .I = uniqueRotations(2, Tetr.base(.I)),
+            .S = uniqueRotations(4, Tetr.base(.S)),
+            .Z = uniqueRotations(4, Tetr.base(.Z)),
+            .T = uniqueRotations(4, Tetr.base(.T)),
+            .L = uniqueRotations(4, Tetr.base(.L)),
+            .J = uniqueRotations(4, Tetr.base(.J)),
+        };
+    }
+
+    fn uniqueRotations(comptime n: usize, b: u16) [n]u16 {
+        var table: [n]u16 = undefined;
+        table[0] = b;
+        for (1..n) |i| {
+            table[i] = rotate(table[i - 1]);
+        }
+        return table;
+    }
+
+    fn isBit(shape: u16, row: u2, col: u2) bool {
+        return shape >> gridToBit(row, col) & 0b1 != 0;
+    }
+
+    fn setBit(shape: u16, row: u2, col: u2) u16 {
+        const word: u16 = @as(u16, 0b1) << gridToBit(row, col);
+        return shape | word;
+    }
+
+    fn rotate(shape: u16) u16 {
+        const initial: u16 = shape;
+        var rotated: u16 = 0;
+        for (0..Tetr.side_length) |row| {
+            for (0..Tetr.side_length) |col| {
+                if (isBit(initial, @intCast(row), @intCast(col))) {
+                    rotated = setBit(rotated, @intCast(col), @intCast(Tetr.side_length - 1 - row));
+                }
+            }
+        }
+        return rotated;
+    }
+
+    fn gridToBit(row: u2, col: u2) u4 {
+        return @intCast(Tetr.size - 1 - (Tetr.side_length * @as(u16, row) + col));
+    }
+};
+
+fn indexRow(shape: u16, index: u2) u4 {
+    const shift: u4 = Tetr.side_length - 1 - index;
+    const nibble = (shape >> (Tetr.side_length * shift)) & 0b1111;
+    return @intCast(nibble);
+}
+
+const ShapeRowIterator = struct {
+    index: u4 = 0,
+    fn next(self: *ShapeRowIterator, shape: u16) ?u4 {
+        if (self.index >= Tetr.side_length) return null;
+        const nibble = indexRow(shape, @intCast(self.index));
+        return if (nibble != 0) blk: {
+            self.index += 1;
+            break :blk nibble;
+        } else null;
+    }
+};
+
+test "rotate" {
+    var o = Current{ .kind = .O, .rot_index = 0 };
+    var i = Current{ .kind = .I, .rot_index = 0 };
+    try testing.expect(o.shape() == 0b1100_1100_0000_0000);
+    o.rotate();
+    try testing.expect(o.shape() == 0b1100_1100_0000_0000);
+    try testing.expect(i.shape() == 0b1000_1000_1000_1000);
+    i.rotate();
+    try testing.expect(i.shape() == 0b1111_0000_0000_0000);
+    i.rotate();
+    try testing.expect(i.shape() == 0b1000_1000_1000_1000);
+}
+
 test "row iterator" {
-    const o: Tetr = .O;
-    const i: Tetr = .I;
-    const t: Tetr = .T;
-    var it = Tetr.Iterator{};
-    try testing.expect(o.indexRow(0) == 0b1100);
-    try testing.expect(o.indexRow(1) == 0b1100);
-    try testing.expect(o.indexRow(2) == 0b0000);
-    try testing.expect(o.indexRow(3) == 0b0000);
+    const o = Tetr.O.base();
+    const i = Tetr.I.base();
+    const t = Tetr.T.base();
+    var it = ShapeRowIterator{};
+    try testing.expect(indexRow(o, 0) == 0b1100);
+    try testing.expect(indexRow(o, 1) == 0b1100);
+    try testing.expect(indexRow(o, 2) == 0b0000);
+    try testing.expect(indexRow(o, 3) == 0b0000);
     try testing.expect(it.next(o).? == 0b1100);
     try testing.expect(it.next(o).? == 0b1100);
     try testing.expect(it.next(o) == null);
     try testing.expect(it.next(o) == null);
     try testing.expect(it.next(o) == null);
-    it = Tetr.Iterator{};
+    it = ShapeRowIterator{};
     for (0..4) |_| try testing.expect(it.next(i) == 0b1000);
-    it = Tetr.Iterator{};
+    it = ShapeRowIterator{};
     try testing.expect(it.next(t).? == 0b1110);
     try testing.expect(it.next(t).? == 0b0100);
 }
 
 test "width" {
-    const o: Tetr = .O;
-    const i: Tetr = .I;
-    const s: Tetr = .S;
-    const z: Tetr = .Z;
-    const l: Tetr = .L;
-    const j: Tetr = .J;
-    const t: Tetr = .T;
+    const o = Current{ .kind = .O };
+    const i = Current{ .kind = .I };
+    const s = Current{ .kind = .S };
+    const z = Current{ .kind = .Z };
+    const l = Current{ .kind = .L };
+    const j = Current{ .kind = .J };
+    const t = Current{ .kind = .T };
     try testing.expect(o.width() == 2);
     try testing.expect(i.width() == 1);
     try testing.expect(s.width() == 3);
     try testing.expect(z.width() == 3);
-    try testing.expect(l.width() == 3);
+    try testing.expect(l.width() == 2);
     try testing.expect(t.width() == 3);
-    try testing.expect(j.width() == 3);
+    try testing.expect(j.width() == 2);
 }
 
 const Current = struct {
     kind: Tetr,
-    x: u4,
-    y: u8,
+    rot_index: u2 = 0,
+    x: u4 = 0,
+    y: u8 = 0,
 
-    fn new(rng: std.Random, x: u4) Current {
-        const kind = rng.enumValue(Tetr);
-        const w = kind.width();
+    fn new(rng: std.Random, x: u4, rot_i: u2) Current {
+        const kind = rng.enumValue(Tetr); // cannot repeat
+        const w = shapeWidth(kind.rotation(rot_i));
         return .{
             .kind = kind,
-            .x = if (x + w > grid_width) x - kind.width() else x,
+            .x = if (x + w > grid_width) x - w else x,
             .y = 0,
+            .rot_index = rot_i,
         };
     }
 
+    fn shape(self: Current) u16 {
+        return self.kind.rotation(self.rot_index);
+    }
+
+    fn rotate(self: *Current) void {
+        self.rot_index +%= 1;
+    }
+
+    fn translate(self: Current) void {
+        var shift: u8 = 0;
+        while (shift < Tetr.size) : (shift += 1) {
+            if ((self.shape() << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
+                const row = shift / Tetr.side_length;
+                const col = shift % Tetr.side_length;
+                grid[self.y + row] |= @as(u10, 1) << @intCast(grid_width - 1 - (self.x + col));
+            }
+        }
+    }
+
+    fn clear(self: Current) void {
+        var shift: u8 = 0;
+        while (shift < Tetr.size) : (shift += 1) {
+            if ((self.shape() << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
+                const row = shift / Tetr.side_length;
+                const col = shift % Tetr.side_length;
+                grid[self.y + row] ^= @as(u10, 1) << @intCast(grid_width - 1 - (self.x + col));
+            }
+        }
+    }
+
+    fn width(self: Current) u4 {
+        return shapeWidth(self.shape());
+    }
+
     fn moveDown(self: *Current) void {
-        self.kind.clear(self.x, self.y);
+        self.clear();
         if (self.checkDownCollision(self.y + 1)) {
-            self.kind.translate(self.x, self.y);
-            self.* = .new(prng, self.x);
+            self.translate();
+            self.* = .new(prng, self.x, self.rot_index);
             tetris();
-            self.kind.translate(self.x, self.y);
+            self.translate();
         } else {
             self.y += 1;
-            self.kind.translate(self.x, self.y);
+            self.translate();
         }
     }
 
     fn checkDownCollision(self: Current, next_y: u8) bool {
-        var it = Tetr.Iterator{};
-        while (it.next(self.kind)) |row| {
+        var it = ShapeRowIterator{};
+        while (it.next(self.shape())) |row| {
             if (next_y + it.index > grid_height) return true;
             const shift_i: i8 = (@as(i8, @intCast(grid_width)) - 4) - self.x;
             const shape_mask = if (shift_i >= 0) @as(u10, row) << @intCast(shift_i) else @as(u10, row) >> @intCast(@abs(shift_i));
@@ -172,6 +266,18 @@ const Current = struct {
         return false;
     }
 };
+
+fn shapeWidth(shape: u16) u4 {
+    var it = ShapeRowIterator{};
+    var w: u4 = 0;
+    while (it.next(shape)) |row| {
+        var shift: u4 = 0;
+        while (shift < Tetr.side_length) : (shift += 1) {
+            if ((row >> @intCast(shift)) & @as(u10, 0b1) != 0) w = @max(Tetr.side_length - @as(u4, shift), w);
+        }
+    }
+    return w;
+}
 
 fn tetris() void {
     var i = grid.len - 1;
@@ -200,26 +306,32 @@ pub fn main(init: std.process.Init) !void {
     var rand = std.Random.DefaultPrng.init(@intCast(std.Io.Timestamp.now(init.io, .real).toMilliseconds()));
     prng = rand.random();
 
-    current = .new(prng, 5);
-    current.kind.translate(current.x, current.y);
+    current = .new(prng, 5, 0);
+    current.translate();
 
     while (!rl.windowShouldClose()) {
         const dt = rl.getFrameTime();
         time_since_last_fell += dt;
 
         if (rl.isKeyDown(.left) and current.x > 0) {
-            current.kind.clear(current.x, current.y);
+            current.clear();
             current.x -= 1;
-            current.kind.translate(current.x, current.y);
+            current.translate();
         }
         if (rl.isKeyDown(.right)) blk: {
-            const width: u10 = current.kind.width();
-            if (current.x >= grid_width - width) break :blk;
-            current.kind.clear(current.x, current.y);
+            if (current.x >= grid_width - current.width()) break :blk;
+            current.clear();
             current.x += 1;
-            current.kind.translate(current.x, current.y);
+            current.translate();
         }
-        if (rl.isKeyDown(.down)) current.moveDown();
+        if (rl.isKeyDown(.down)) {
+            current.moveDown();
+        }
+        if (rl.isKeyPressed(.up)) {
+            current.clear();
+            current.rotate();
+            current.translate();
+        }
 
         if (time_since_last_fell >= fall_tick) {
             time_since_last_fell = 0;
