@@ -30,7 +30,7 @@ var grid: [grid_height]u10 = @splat(0);
 const Tetr = enum {
     const size = 16;
     const side_length = size / 4;
-    const rot_table = RotTable.init();
+    const rot_table = RotTable{};
     O,
     S,
     Z,
@@ -38,88 +38,27 @@ const Tetr = enum {
     T,
     L,
     J,
-
-    fn base(self: Tetr) u16 {
-        return switch (self) {
-            .O => 0b1100_1100_0000_0000,
-            .S => 0b0110_1100_0000_0000,
-            .Z => 0b1100_0110_0000_0000,
-            .I => 0b1000_1000_1000_1000,
-            .T => 0b1110_0100_0000_0000,
-            .L => 0b1000_1000_1100_0000,
-            .J => 0b0100_0100_1100_0000,
-        };
-    }
-
     fn rotation(self: Tetr, rot_index: u2) u16 {
         return switch (self) {
-            .O => Tetr.rot_table.O[0],
-            .I => Tetr.rot_table.I[rot_index % 2],
-            .S => Tetr.rot_table.S[rot_index],
-            .Z => Tetr.rot_table.Z[rot_index],
-            .T => Tetr.rot_table.T[rot_index],
-            .L => Tetr.rot_table.L[rot_index],
-            .J => Tetr.rot_table.J[rot_index],
+            .O => rot_table.O[0],
+            .I => rot_table.I[rot_index % 2],
+            .S => rot_table.S[rot_index % 2],
+            .Z => rot_table.Z[rot_index % 2],
+            .T => rot_table.T[rot_index],
+            .L => rot_table.L[rot_index],
+            .J => rot_table.J[rot_index],
         };
     }
 };
 
 const RotTable = struct {
-    O: [1]u16,
-    I: [2]u16,
-    S: [4]u16,
-    Z: [4]u16,
-    T: [4]u16,
-    L: [4]u16,
-    J: [4]u16,
-
-    fn init() RotTable {
-        @setEvalBranchQuota(2000);
-        return .{
-            .O = uniqueRotations(1, Tetr.base(.O)),
-            .I = uniqueRotations(2, Tetr.base(.I)),
-            .S = uniqueRotations(4, Tetr.base(.S)),
-            .Z = uniqueRotations(4, Tetr.base(.Z)),
-            .T = uniqueRotations(4, Tetr.base(.T)),
-            .L = uniqueRotations(4, Tetr.base(.L)),
-            .J = uniqueRotations(4, Tetr.base(.J)),
-        };
-    }
-
-    fn uniqueRotations(comptime n: usize, b: u16) [n]u16 {
-        var table: [n]u16 = undefined;
-        table[0] = b;
-        for (1..n) |i| {
-            table[i] = rotate(table[i - 1]);
-        }
-        return table;
-    }
-
-    fn isBit(shape: u16, row: u2, col: u2) bool {
-        return shape >> gridToBit(row, col) & 0b1 != 0;
-    }
-
-    fn setBit(shape: u16, row: u2, col: u2) u16 {
-        const word: u16 = @as(u16, 0b1) << gridToBit(row, col);
-        return shape | word;
-    }
-
-    fn rotate(shape: u16) u16 {
-        const initial: u16 = shape;
-        var rotated: u16 = 0;
-        for (0..Tetr.side_length) |row| {
-            for (0..Tetr.side_length) |col| {
-                if (isBit(initial, @intCast(row), @intCast(col))) {
-                    rotated = setBit(rotated, @intCast(col), @intCast(Tetr.side_length - 1 - row));
-                }
-            }
-        }
-        return rotated;
-    }
-
-    fn gridToBit(row: u2, col: u2) u4 {
-        return @intCast(Tetr.size - 1 - (Tetr.side_length * @as(u16, row) + col));
-    }
+    O: [1]u16 = .{0b1100_1100_0000_0000},
+    I: [2]u16 = .{ 0b1000_1000_1000_1000, 0b1111_0000_0000_0000 },
+    S: [2]u16 = .{ 0b0110_1100_0000_0000, 0b1000_1100_0100_0000 },
+    Z: [2]u16 = .{ 0b1100_0110_0000_0000, 0b0100_1100_1000_0000 },
+    T: [4]u16 = .{ 0b1110_0100_0000_0000, 0b0100_1100_0100_0000, 0b0100_1110_0000_0000, 0b1000_1100_1000_0000 },
+    L: [4]u16 = .{ 0b1000_1000_1100_0000, 0b1110_1000_0000_0000, 0b1100_0100_0100_0000, 0b0010_1110_0000_0000 },
+    J: [4]u16 = .{ 0b0100_0100_1100_0000, 0b1000_1110_0000_0000, 0b1100_1000_1000_0000, 0b1110_0010_0000_0000 },
 };
 
 fn indexRow(shape: u16, index: u2) u4 {
@@ -154,24 +93,18 @@ test "rotate" {
 }
 
 test "row iterator" {
-    const o = Tetr.O.base();
-    const i = Tetr.I.base();
-    const t = Tetr.T.base();
-    var it = ShapeRowIterator{};
-    try testing.expect(indexRow(o, 0) == 0b1100);
-    try testing.expect(indexRow(o, 1) == 0b1100);
-    try testing.expect(indexRow(o, 2) == 0b0000);
-    try testing.expect(indexRow(o, 3) == 0b0000);
-    try testing.expect(it.next(o).? == 0b1100);
-    try testing.expect(it.next(o).? == 0b1100);
-    try testing.expect(it.next(o) == null);
-    try testing.expect(it.next(o) == null);
-    try testing.expect(it.next(o) == null);
-    it = ShapeRowIterator{};
-    for (0..4) |_| try testing.expect(it.next(i) == 0b1000);
-    it = ShapeRowIterator{};
-    try testing.expect(it.next(t).? == 0b1110);
-    try testing.expect(it.next(t).? == 0b0100);
+    var l = Current{ .kind = .L };
+    try testing.expect(l.shape() == Tetr.rot_table.L[0]);
+    try testing.expect(l.width() == 2);
+    l.rotate();
+    try testing.expect(l.shape() == Tetr.rot_table.L[1]);
+    try testing.expect(l.width() == 3);
+    l.rotate();
+    try testing.expect(l.shape() == Tetr.rot_table.L[2]);
+    try testing.expect(l.width() == 2);
+    l.rotate();
+    try testing.expect(l.shape() == Tetr.rot_table.L[3]);
+    try testing.expect(l.width() == 3);
 }
 
 test "width" {
