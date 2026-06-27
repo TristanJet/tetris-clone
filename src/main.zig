@@ -19,9 +19,8 @@ var current: Current = undefined;
 
 var prng: std.Random = undefined;
 
-//Rows are represented by u16
 //big endian
-var grid: [grid_height + 1]u10 = @splat(0);
+var grid: [grid_height]u10 = @splat(0);
 
 //each tetromino is 4x4 grid -- represented by a u16
 //      1100
@@ -35,32 +34,35 @@ const Tetr = enum(u16) {
     };
 
     const Iterator = struct {
-        row: u4 = 0,
-        fn next(self: *Iterator, tetr: Tetr) ?Row {
-            while (self.row < n_rows) {
-                const r = self.row;
-                self.row += 1;
-                const nibble: u16 = (@intFromEnum(tetr) >> @intCast((n_rows - 1 - r) * 4)) & 0b1111;
-                if (nibble != 0) {
-                    return .{ .bits = @intCast(nibble), .height = r + 1 };
-                }
-            }
-            return null;
+        index: u4 = 0,
+        fn next(self: *Iterator, tetr: Tetr) ?u4 {
+            if (self.index >= side_length) return null;
+            const nibble = tetr.indexRow(@intCast(self.index));
+            return if (nibble != 0) blk: {
+                self.index += 1;
+                break :blk nibble;
+            } else null;
         }
     };
     const size = 16;
-    const n_rows = size / 4;
+    const side_length = size / 4;
     O = 0b1100_1100_0000_0000,
     S = 0b0110_1100_0000_0000,
     Z = 0b1100_0110_0000_0000,
     I = 0b1000_1000_1000_1000,
 
+    fn indexRow(self: Tetr, index: u2) u4 {
+        const shift: u4 = side_length - 1 - index;
+        const nibble = (@intFromEnum(self) >> (side_length * shift)) & 0b1111;
+        return @intCast(nibble);
+    }
+
     fn translate(self: Tetr, x: u8, y: u8) void {
         var shift: u8 = 0;
         while (shift < size) : (shift += 1) {
             if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
-                const row = shift / n_rows;
-                const col = shift % n_rows;
+                const row = shift / side_length;
+                const col = shift % side_length;
                 grid[y + row] |= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
             }
         }
@@ -70,8 +72,8 @@ const Tetr = enum(u16) {
         var shift: u8 = 0;
         while (shift < size) : (shift += 1) {
             if ((@intFromEnum(self) << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
-                const row = shift / n_rows;
-                const col = shift % n_rows;
+                const row = shift / side_length;
+                const col = shift % side_length;
                 grid[y + row] ^= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
             }
         }
@@ -82,8 +84,8 @@ const Tetr = enum(u16) {
         var w: u4 = 0;
         while (it.next(self)) |row| {
             var shift: u4 = 0;
-            while (shift < n_rows) : (shift += 1) {
-                if ((row.bits >> shift) & @as(u10, 0b1) != 0) w = @max(n_rows - shift, w);
+            while (shift < side_length) : (shift += 1) {
+                if ((row >> @intCast(shift)) & @as(u10, 0b1) != 0) w = @max(side_length - @as(u4, shift), w);
             }
         }
         return w;
@@ -131,10 +133,10 @@ const Current = struct {
     fn checkDownCollision(self: Current, next_y: u8) bool {
         var it = Tetr.Iterator{};
         while (it.next(self.kind)) |row| {
-            if (next_y + row.height > grid_height) return true;
+            if (next_y + it.index > grid_height) return true;
             const shift_i: i8 = (@as(i8, @intCast(grid_width)) - 4) - self.x;
-            const shape_mask = if (shift_i >= 0) @as(u10, row.bits) << @intCast(shift_i) else @as(u10, row.bits) >> @intCast(@abs(shift_i));
-            if (grid[next_y + row.height - 1] & shape_mask != 0) return true;
+            const shape_mask = if (shift_i >= 0) @as(u10, row) << @intCast(shift_i) else @as(u10, row) >> @intCast(@abs(shift_i));
+            if (grid[next_y + it.index - 1] & shape_mask != 0) return true;
         }
         return false;
     }
@@ -142,20 +144,16 @@ const Current = struct {
 
 test "row iterator" {
     const o: Tetr = .O;
-    const i: Tetr = .I;
-    const s: Tetr = .S;
-    // const z: Tetr = .Z;
     var it = Tetr.Iterator{};
-    try testing.expect(it.next(o).?.bits == 0b1100);
-    try testing.expect(it.next(o).?.bits == 0b1100);
+    try testing.expect(o.indexRow(0) == 0b1100);
+    try testing.expect(o.indexRow(1) == 0b1100);
+    try testing.expect(o.indexRow(2) == 0b0000);
+    try testing.expect(o.indexRow(3) == 0b0000);
+    try testing.expect(it.next(o).? == 0b1100);
+    try testing.expect(it.next(o).? == 0b1100);
     try testing.expect(it.next(o) == null);
-    it = Tetr.Iterator{};
-    try testing.expect(it.next(i).?.bits == 0b1000);
-    try testing.expect(it.next(i).?.bits == 0b1000);
-    it = Tetr.Iterator{};
-    try testing.expect(it.next(s).?.bits == 0b0110);
-    try testing.expect(it.next(s).?.bits == 0b1100);
-    try testing.expect(it.next(s) == null);
+    try testing.expect(it.next(o) == null);
+    try testing.expect(it.next(o) == null);
 }
 
 pub fn main() !void {
