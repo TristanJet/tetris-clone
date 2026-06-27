@@ -50,6 +50,9 @@ const Tetr = enum(u16) {
     S = 0b0110_1100_0000_0000,
     Z = 0b1100_0110_0000_0000,
     I = 0b1000_1000_1000_1000,
+    T = 0b1110_0100_0000_0000,
+    L = 0b1000_1110_0000_0000,
+    J = 0b0010_1110_0000_0000,
 
     fn indexRow(self: Tetr, index: u2) u4 {
         const shift: u4 = side_length - 1 - index;
@@ -92,15 +95,42 @@ const Tetr = enum(u16) {
     }
 };
 
+test "row iterator" {
+    const o: Tetr = .O;
+    const i: Tetr = .I;
+    const t: Tetr = .T;
+    var it = Tetr.Iterator{};
+    try testing.expect(o.indexRow(0) == 0b1100);
+    try testing.expect(o.indexRow(1) == 0b1100);
+    try testing.expect(o.indexRow(2) == 0b0000);
+    try testing.expect(o.indexRow(3) == 0b0000);
+    try testing.expect(it.next(o).? == 0b1100);
+    try testing.expect(it.next(o).? == 0b1100);
+    try testing.expect(it.next(o) == null);
+    try testing.expect(it.next(o) == null);
+    try testing.expect(it.next(o) == null);
+    it = Tetr.Iterator{};
+    for (0..4) |_| try testing.expect(it.next(i) == 0b1000);
+    it = Tetr.Iterator{};
+    try testing.expect(it.next(t).? == 0b1110);
+    try testing.expect(it.next(t).? == 0b0100);
+}
+
 test "width" {
     const o: Tetr = .O;
     const i: Tetr = .I;
     const s: Tetr = .S;
     const z: Tetr = .Z;
+    const l: Tetr = .L;
+    const j: Tetr = .J;
+    const t: Tetr = .T;
     try testing.expect(o.width() == 2);
     try testing.expect(i.width() == 1);
     try testing.expect(s.width() == 3);
     try testing.expect(z.width() == 3);
+    try testing.expect(l.width() == 3);
+    try testing.expect(t.width() == 3);
+    try testing.expect(j.width() == 3);
 }
 
 const Current = struct {
@@ -123,6 +153,7 @@ const Current = struct {
         if (self.checkDownCollision(self.y + 1)) {
             self.kind.translate(self.x, self.y);
             self.* = .new(prng, self.x);
+            tetris();
             self.kind.translate(self.x, self.y);
         } else {
             self.y += 1;
@@ -142,28 +173,31 @@ const Current = struct {
     }
 };
 
-test "row iterator" {
-    const o: Tetr = .O;
-    var it = Tetr.Iterator{};
-    try testing.expect(o.indexRow(0) == 0b1100);
-    try testing.expect(o.indexRow(1) == 0b1100);
-    try testing.expect(o.indexRow(2) == 0b0000);
-    try testing.expect(o.indexRow(3) == 0b0000);
-    try testing.expect(it.next(o).? == 0b1100);
-    try testing.expect(it.next(o).? == 0b1100);
-    try testing.expect(it.next(o) == null);
-    try testing.expect(it.next(o) == null);
-    try testing.expect(it.next(o) == null);
+fn tetris() void {
+    var i = grid.len - 1;
+    while (i > 0) : (i -= 1) {
+        while (~grid[i] == 0) {
+            grid[i] = 0;
+            shiftAll(i - 1);
+        }
+    }
 }
 
-pub fn main() !void {
+fn shiftAll(i: usize) void {
+    if (grid[i + 1] != 0 or grid[i] == 0) return;
+    grid[i + 1] = grid[i];
+    grid[i] = 0;
+    shiftAll(i - 1);
+}
+
+pub fn main(init: std.process.Init) !void {
     rl.initWindow(screen_size, screen_size, "Tetris Clone");
     defer rl.closeWindow();
 
     rl.setTargetFPS(15);
     rl.setWindowPosition(0, 0);
 
-    var rand = std.Random.DefaultPrng.init(80085);
+    var rand = std.Random.DefaultPrng.init(@intCast(std.Io.Timestamp.now(init.io, .real).toMilliseconds()));
     prng = rand.random();
 
     current = .new(prng, 5);
@@ -179,12 +213,7 @@ pub fn main() !void {
             current.kind.translate(current.x, current.y);
         }
         if (rl.isKeyDown(.right)) blk: {
-            const width: u10 = switch (current.kind) {
-                .O => 2,
-                .I => 1,
-                .S => 3,
-                .Z => 3,
-            };
+            const width: u10 = current.kind.width();
             if (current.x >= grid_width - width) break :blk;
             current.kind.clear(current.x, current.y);
             current.x += 1;
