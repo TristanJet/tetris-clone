@@ -17,6 +17,10 @@ const fall_tick = 0.3; //fall every x seconds
 var time_since_last_fell: f32 = 0;
 var current: Current = undefined;
 
+var score: u32 = 0;
+const score_increase_base: f32 = 100;
+const compound_factor: f32 = 1.2;
+
 var prng: std.Random = undefined;
 
 //big endian
@@ -136,7 +140,12 @@ const Current = struct {
         var shape_it = ShapeRowIterator{};
         for (0..Tetr.side_length) |i| {
             const shape_row = shape_it.next(s) orelse continue;
-            if (grid[rot.y + i] & (@as(u10, shape_row) << grid_width - 1 - self.x) != 0) return true;
+            const start = (grid_width - Tetr.side_length);
+            if (start > self.x) {
+                if (grid[rot.y + i] & (@as(u10, shape_row) << start - self.x) != 0) return true;
+            } else {
+                if (grid[rot.y + i] & (@as(u10, shape_row) >> self.x - start) != 0) return true;
+            }
         }
         return false;
     }
@@ -181,6 +190,7 @@ const Current = struct {
             self.translate();
             self.* = .new(prng, self.x, self.rot_index, self.kind);
             tetris();
+            resetGame();
             self.translate();
         } else {
             self.y += 1;
@@ -321,19 +331,37 @@ test "height" {
 }
 fn tetris() void {
     var i = grid.len - 1;
+    var increase: f32 = 0;
     while (i > 0) : (i -= 1) {
         while (~grid[i] == 0) {
+            if (increase == 0) increase = 100;
             grid[i] = 0;
             shiftAll(i - 1);
+            increase *= compound_factor;
         }
     }
+    score += @round(increase);
+}
+
+test "score" {
+    score = 0;
+    const cf: f32 = 1.2 * 1.2 * 1.2 * 1.2;
+    score += @as(u32, @round(score_increase_base * cf));
+    print("score: {}\n", .{score});
 }
 
 fn shiftAll(i: usize) void {
     if (grid[i + 1] != 0 or grid[i] == 0) return;
     grid[i + 1] = grid[i];
     grid[i] = 0;
-    shiftAll(i - 1);
+    return shiftAll(i - 1);
+}
+
+fn resetGame() void {
+    if (grid[0] != 0) {
+        grid = @splat(0);
+        score = 0;
+    }
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -390,9 +418,16 @@ pub fn main(init: std.process.Init) !void {
         defer rl.endDrawing();
 
         rl.clearBackground(.black);
+        drawText();
         drawGridShape();
         drawGridValues();
     }
+}
+
+fn drawText() void {
+    var buffer: [128]u8 = undefined;
+    const text = std.fmt.bufPrintSentinel(&buffer, "Score:\n{}", .{score}, 0) catch "Score: <error>";
+    rl.drawText(text, @intCast(screen_grid_x_off - 170), @intCast(screen_grid_y_off + 200), @intCast(40), .white);
 }
 
 fn drawGridShape() void {
