@@ -1,8 +1,12 @@
 const std = @import("std");
 const rl = @import("raylib");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const testing = std.testing;
 const print = std.debug.print;
+
+const emscripten = std.os.emscripten;
+const loop_callconv: std.builtin.CallingConvention = if (builtin.os.tag == .emscripten) .c else .auto;
 
 const Screen = enum {
     game,
@@ -382,9 +386,6 @@ pub fn main(init: std.process.Init) !void {
     rl.initWindow(screen_size, screen_size, "Tetris Clone");
     defer rl.closeWindow();
 
-    rl.setTargetFPS(15);
-    rl.setWindowPosition(0, 0);
-
     rl.initAudioDevice();
     defer rl.closeAudioDevice();
 
@@ -398,67 +399,77 @@ pub fn main(init: std.process.Init) !void {
     current = .new(prng, 5, 0, null);
     current.translate();
 
-    while (!rl.windowShouldClose()) {
-        switch (screen) {
-            .game => {
-                const dt = rl.getFrameTime();
-                time_since_last_fell += dt;
+    if (builtin.os.tag == .emscripten) {
+        emscripten.emscripten_set_main_loop(&doEverything, 15, 1);
+    } else {
+        rl.setWindowPosition(0, 0);
 
-                if (rl.isKeyDown(.left) and current.x > 0) blk: {
-                    current.clear();
-                    if (current.checkLeftCollision()) {
-                        current.translate();
-                        break :blk;
-                    }
-                    current.x -= 1;
+        rl.setTargetFPS(15);
+        while (!rl.windowShouldClose()) {
+            doEverything();
+        }
+    }
+}
+
+fn doEverything() callconv(loop_callconv) void {
+    switch (screen) {
+        .game => {
+            const dt = rl.getFrameTime();
+            time_since_last_fell += dt;
+
+            if (rl.isKeyDown(.left) and current.x > 0) blk: {
+                current.clear();
+                if (current.checkLeftCollision()) {
                     current.translate();
-                }
-                if (rl.isKeyDown(.right)) blk: {
-                    if (current.x >= grid_width - current.width()) break :blk;
-                    current.clear();
-                    if (current.checkRightCollision()) {
-                        current.translate();
-                        break :blk;
-                    }
-                    current.x += 1;
-                    current.translate();
-                }
-                if (rl.isKeyDown(.down)) {
-                    current.moveDown();
-                }
-                if (rl.isKeyPressed(.up)) {
-                    current.clear();
-                    current.rotate();
-                    current.translate();
-                }
-
-                if (time_since_last_fell >= fall_tick) {
-                    time_since_last_fell = 0;
-                    current.moveDown();
-                }
-
-                rl.beginDrawing();
-                defer rl.endDrawing();
-
-                rl.clearBackground(.black);
-                drawText();
-                drawGridShape();
-                drawGridValues();
-            },
-            .end => blk: {
-                rl.beginDrawing();
-                defer rl.endDrawing();
-
-                const is_input = rl.isKeyPressed(.space) or rl.isKeyPressed(.up) or rl.isKeyPressed(.right) or rl.isKeyPressed(.left) or rl.isKeyPressed(.down);
-                if (is_input) {
-                    resetGame();
-                    screen = .game;
                     break :blk;
                 }
-                rl.clearBackground(.black);
-                drawEnd();
-            },
-        }
+                current.x -= 1;
+                current.translate();
+            }
+            if (rl.isKeyDown(.right)) blk: {
+                if (current.x >= grid_width - current.width()) break :blk;
+                current.clear();
+                if (current.checkRightCollision()) {
+                    current.translate();
+                    break :blk;
+                }
+                current.x += 1;
+                current.translate();
+            }
+            if (rl.isKeyDown(.down)) {
+                current.moveDown();
+            }
+            if (rl.isKeyPressed(.up)) {
+                current.clear();
+                current.rotate();
+                current.translate();
+            }
+
+            if (time_since_last_fell >= fall_tick) {
+                time_since_last_fell = 0;
+                current.moveDown();
+            }
+
+            rl.beginDrawing();
+            defer rl.endDrawing();
+
+            rl.clearBackground(.black);
+            drawText();
+            drawGridShape();
+            drawGridValues();
+        },
+        .end => blk: {
+            rl.beginDrawing();
+            defer rl.endDrawing();
+
+            if (rl.isKeyPressed(.space)) {
+                resetGame();
+                screen = .game;
+                break :blk;
+            }
+            rl.clearBackground(.black);
+            drawEnd();
+        },
     }
 }
 
