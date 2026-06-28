@@ -4,6 +4,12 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const print = std.debug.print;
 
+const Screen = enum {
+    game,
+    end,
+};
+
+var screen = Screen.game;
 const screen_size = 720;
 const grid_height = 20;
 const grid_width = 10;
@@ -17,9 +23,12 @@ const fall_tick = 0.3; //fall every x seconds
 var time_since_last_fell: f32 = 0;
 var current: Piece = undefined;
 
+var score: u32 = 0;
+const score_increase_base: f32 = 100;
+const compound_factor: f32 = 1.2;
+
 var prng: std.Random = undefined;
 
-//Rows are represented by u16
 //big endian
 var grid: [grid_height]u10 = @splat(0);
 
@@ -28,185 +37,203 @@ var grid: [grid_height]u10 = @splat(0);
 //      1100
 //      0000
 //      0000
-const Piece = struct {
-    kind: PieceKind,
-    rot: u2,
-    x: u4,
-    y: u8,
-
-    const Row = struct {
-        bits: u10,
-        height: u4,
-    };
-
-    const Iterator = struct {
-        row: u4 = 0,
-        fn next(self: *Iterator, shape: u16) ?Row {
-            while (self.row < n_rows) {
-                const r = self.row;
-                self.row += 1;
-                const nibble: u16 = (shape >> @intCast((n_rows - 1 - r) * 4)) & 0b1111;
-                if (nibble != 0) {
-                    return .{ .bits = @intCast(nibble), .height = r + 1 };
-                }
-            }
-            return null;
-        }
-    };
+const Tetr = enum {
     const size = 16;
-    const n_rows = size / 4;
-
-    const PieceKind = enum {
-        O,
-        S,
-        Z,
-        I,
-        T,
-        L,
-        J,
-    };
-
-    fn baseMask(kind: PieceKind) u16 {
-        return switch (kind) {
-            .O => 0b1100_1100_0000_0000,
-            .S => 0b0110_1100_0000_0000,
-            .Z => 0b1100_0110_0000_0000,
-            .I => 0b1000_1000_1000_1000,
-            .T => 0b1110_0100_0000_0000,
-            .L => 0b1000_1110_0000_0000,
-            .J => 0b0010_1110_0000_0000,
+    const side_length = size / 4;
+    const rot_table = RotTable{};
+    O,
+    S,
+    Z,
+    I,
+    T,
+    L,
+    J,
+    fn rotation(self: Tetr, rot_index: u2) u16 {
+        return switch (self) {
+            .O => rot_table.O[0],
+            .I => rot_table.I[rot_index % 2],
+            .S => rot_table.S[rot_index % 2],
+            .Z => rot_table.Z[rot_index % 2],
+            .T => rot_table.T[rot_index],
+            .L => rot_table.L[rot_index],
+            .J => rot_table.J[rot_index],
         };
     }
+};
 
-    fn rotate90(shape: u16) u16 {
-        var out: u16 = 0;
-        var r: u4 = 0;
-        while (r < n_rows) : (r += 1) {
-            var c: u4 = 0;
-            while (c < n_rows) : (c += 1) {
-                const src_shift: u4 = (n_rows - 1 - r) * 4 + (n_rows - 1 - c);
-                const bit = (shape >> src_shift) & 0b1;
-                if (bit == 1) {
-                    const dst_r: u4 = c;
-                    const dst_c: u4 = (n_rows - 1 - r);
-                    const dst_shift: u4 = (n_rows - 1 - dst_r) * 4 + (n_rows - 1 - dst_c);
-                    out |= @as(u16, 1) << dst_shift;
-                }
-            }
-        }
-        return out;
-    }
+const RotTable = struct {
+    O: [1]u16 = .{0b1100_1100_0000_0000},
+    I: [2]u16 = .{ 0b1000_1000_1000_1000, 0b1111_0000_0000_0000 },
+    S: [2]u16 = .{ 0b0110_1100_0000_0000, 0b1000_1100_0100_0000 },
+    Z: [2]u16 = .{ 0b1100_0110_0000_0000, 0b0100_1100_1000_0000 },
+    T: [4]u16 = .{ 0b1110_0100_0000_0000, 0b0100_1100_0100_0000, 0b0100_1110_0000_0000, 0b1000_1100_1000_0000 },
+    L: [4]u16 = .{ 0b1000_1000_1100_0000, 0b1110_1000_0000_0000, 0b1100_0100_0100_0000, 0b0010_1110_0000_0000 },
+    J: [4]u16 = .{ 0b0100_0100_1100_0000, 0b1000_1110_0000_0000, 0b1100_1000_1000_0000, 0b1110_0010_0000_0000 },
+};
 
-    fn normalize(shape: u16) u16 {
-        var top: u4 = n_rows;
-        var left: u4 = n_rows;
-        var r: u4 = 0;
-        while (r < n_rows) : (r += 1) {
-            var c: u4 = 0;
-            while (c < n_rows) : (c += 1) {
-                const shift: u4 = (n_rows - 1 - r) * 4 + (n_rows - 1 - c);
-                if (((shape >> shift) & 0b1) != 0) {
-                    top = @min(top, r);
-                    left = @min(left, c);
-                }
-            }
-        }
-        if (top == n_rows) return 0;
-        var out: u16 = 0;
-        r = top;
-        while (r < n_rows) : (r += 1) {
-            var c: u4 = left;
-            while (c < n_rows) : (c += 1) {
-                const src_shift: u4 = (n_rows - 1 - r) * 4 + (n_rows - 1 - c);
-                if (((shape >> src_shift) & 0b1) != 0) {
-                    const dst_r: u4 = r - top;
-                    const dst_c: u4 = c - left;
-                    const dst_shift: u4 = (n_rows - 1 - dst_r) * 4 + (n_rows - 1 - dst_c);
-                    out |= @as(u16, 1) << dst_shift;
-                }
-            }
-        }
-        return out;
-    }
+fn indexRow(shape: u16, index: u2) u4 {
+    const shift: u4 = Tetr.side_length - 1 - index;
+    const nibble = (shape >> (Tetr.side_length * shift)) & 0b1111;
+    return @intCast(nibble);
+}
 
-    fn maskFrom(kind: PieceKind, rot: u2) u16 {
-        var m = baseMask(kind);
-        var i: u2 = 0;
-        while (i < rot) : (i += 1) {
-            m = normalize(rotate90(m));
-        }
-        return m;
+const ShapeRowIterator = struct {
+    index: u4 = 0,
+    fn next(self: *ShapeRowIterator, shape: u16) ?u4 {
+        if (self.index >= Tetr.side_length) return null;
+        const nibble = indexRow(shape, @intCast(self.index));
+        return if (nibble != 0) blk: {
+            self.index += 1;
+            break :blk nibble;
+        } else null;
     }
+};
 
-    fn translate(shape: u16, x: u8, y: u8) void {
-        var shift: u8 = 0;
-        while (shift < size) : (shift += 1) {
-            if ((shape << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
-                const row = shift / n_rows;
-                const col = shift % n_rows;
-                grid[y + row] |= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
-            }
-        }
-    }
+test "rotate" {
+    var o = Current{ .kind = .O, .rot_index = 0 };
+    var i = Current{ .kind = .I, .rot_index = 0 };
+    try testing.expect(o.shape() == 0b1100_1100_0000_0000);
+    o.rotate();
+    try testing.expect(o.shape() == 0b1100_1100_0000_0000);
+    try testing.expect(i.shape() == 0b1000_1000_1000_1000);
+    i.rotate();
+    try testing.expect(i.shape() == 0b1111_0000_0000_0000);
+    i.rotate();
+    try testing.expect(i.shape() == 0b1000_1000_1000_1000);
+}
 
-    fn clear(shape: u16, x: u8, y: u8) void {
-        var shift: u8 = 0;
-        while (shift < size) : (shift += 1) {
-            if ((shape << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
-                const row = shift / n_rows;
-                const col = shift % n_rows;
-                grid[y + row] ^= @as(u10, 1) << @intCast(grid_width - 1 - (x + col));
-            }
-        }
-    }
+test "row iterator" {
+    var l = Current{ .kind = .L };
+    try testing.expect(l.shape() == Tetr.rot_table.L[0]);
+    try testing.expect(l.width() == 2);
+    l.rotate();
+    try testing.expect(l.shape() == Tetr.rot_table.L[1]);
+    try testing.expect(l.width() == 3);
+    l.rotate();
+    try testing.expect(l.shape() == Tetr.rot_table.L[2]);
+    try testing.expect(l.width() == 2);
+    l.rotate();
+    try testing.expect(l.shape() == Tetr.rot_table.L[3]);
+    try testing.expect(l.width() == 3);
+}
+const Current = struct {
+    kind: Tetr,
+    rot_index: u2 = 0,
+    x: u4 = 0,
+    y: u8 = 0,
 
-    fn width(shape: u16) u4 {
-        var it = Iterator{};
-        var w: u4 = 0;
-        while (it.next(shape)) |row| {
-            var shift: u4 = 0;
-            while (shift < n_rows) : (shift += 1) {
-                if ((row.bits >> shift) & @as(u10, 0b1) != 0) w = @max(n_rows - shift, w);
-            }
-        }
-        return w;
-    }
-    fn new(rng: std.Random, x: u4) Piece {
-        const kind = rng.enumValue(PieceKind);
-        const w = width(maskFrom(kind, 0));
+    fn new(rng: std.Random, x: u4, rot_i: u2, prev_tetr: ?Tetr) Current {
+        const kind = if (prev_tetr) |prev| choice(rng, prev) else rng.enumValue(Tetr);
+        const w = shapeWidth(kind.rotation(rot_i));
         return .{
             .kind = kind,
-            .rot = 0,
             .x = if (x + w > grid_width) x - w else x,
             .y = 0,
+            .rot_index = rot_i,
         };
     }
 
-    fn mask(self: Piece) u16 {
-        return maskFrom(self.kind, self.rot);
+    fn shape(self: Current) u16 {
+        return self.kind.rotation(self.rot_index);
     }
 
-    fn moveDown(self: *Piece) void {
-        clear(self.mask(), self.x, self.y);
-        if (self.checkDownCollision(self.y + 1)) {
-            translate(self.mask(), self.x, self.y);
-            self.* = .new(prng, self.x);
-            tetris();
-            translate(self.mask(), self.x, self.y);
-        } else {
-            self.y += 1;
-            translate(self.mask(), self.x, self.y);
+    fn isOverlapping(self: Current) bool {
+        var rot = self;
+        rot.rot_index +%= 1;
+        const s = rot.shape();
+        if (rot.x + rot.width() > grid_width) return true;
+        if (rot.y + rot.height() > grid_height) return true;
+        var shape_it = ShapeRowIterator{};
+        for (0..Tetr.side_length) |i| {
+            const shape_row = shape_it.next(s) orelse continue;
+            const start = (grid_width - Tetr.side_length);
+            if (start > self.x) {
+                if (grid[rot.y + i] & (@as(u10, shape_row) << start - self.x) != 0) return true;
+            } else {
+                if (grid[rot.y + i] & (@as(u10, shape_row) >> self.x - start) != 0) return true;
+            }
+        }
+        return false;
+    }
+    fn rotate(self: *Current) void {
+        if (self.isOverlapping()) return;
+        self.rot_index +%= 1;
+    }
+
+    fn translate(self: Current) void {
+        var shift: u8 = 0;
+        while (shift < Tetr.size) : (shift += 1) {
+            if ((self.shape() << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
+                const row = shift / Tetr.side_length;
+                const col = shift % Tetr.side_length;
+                grid[self.y + row] |= @as(u10, 1) << @intCast(grid_width - 1 - (self.x + col));
+            }
         }
     }
 
-    fn checkDownCollision(self: Piece, next_y: u8) bool {
-        var it = Iterator{};
-        const shape = self.mask();
-        while (it.next(shape)) |row| {
-            if (next_y + row.height > grid_height) return true;
+    fn clear(self: Current) void {
+        var shift: u8 = 0;
+        while (shift < Tetr.size) : (shift += 1) {
+            if ((self.shape() << @as(u4, @intCast(shift))) & (0b1 << 15) != 0) {
+                const row = shift / Tetr.side_length;
+                const col = shift % Tetr.side_length;
+                grid[self.y + row] ^= @as(u10, 1) << @intCast(grid_width - 1 - (self.x + col));
+            }
+        }
+    }
+
+    fn width(self: Current) u4 {
+        return shapeWidth(self.shape());
+    }
+
+    fn height(self: Current) u4 {
+        return shapeHeight(self.shape());
+    }
+
+    fn moveDown(self: *Current) void {
+        self.clear();
+        if (self.checkDownCollision(self.y + 1)) {
+            self.translate();
+            self.* = .new(prng, self.x, self.rot_index, self.kind);
+            tetris();
+            if (grid[0] != 0) endGame();
+            self.translate();
+        } else {
+            self.y += 1;
+            self.translate();
+        }
+    }
+
+    fn checkDownCollision(self: Current, next_y: u8) bool {
+        var it = ShapeRowIterator{};
+        const s = self.shape();
+        while (it.next(s)) |row| {
+            if (next_y + it.index > grid_height) return true;
             const shift_i: i8 = (@as(i8, @intCast(grid_width)) - 4) - self.x;
-            const shape_mask = if (shift_i >= 0) @as(u10, row.bits) << @intCast(shift_i) else @as(u10, row.bits) >> @intCast(@abs(shift_i));
-            if (grid[next_y + row.height - 1] & shape_mask != 0) return true;
+            const shape_mask = if (shift_i >= 0) @as(u10, row) << @intCast(shift_i) else @as(u10, row) >> @intCast(@abs(shift_i));
+            if (grid[next_y + it.index - 1] & shape_mask != 0) return true;
+        }
+        return false;
+    }
+
+    fn checkLeftCollision(self: Current) bool {
+        var it = ShapeRowIterator{};
+        const s = self.shape();
+        while (it.next(s)) |row| {
+            const leftmost = leftmostBit(row) orelse continue;
+            print("grid row: {b}\n", .{grid[self.y + it.index - 1]});
+            print("x: {}\n", .{self.x - 1});
+            if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - (self.x + leftmost)) != 0) return true;
+        }
+        return false;
+    }
+    //why does this need magic value 2?
+    fn checkRightCollision(self: Current) bool {
+        var it = ShapeRowIterator{};
+        const s = self.shape();
+        while (it.next(s)) |row| {
+            const rightmost = rightmostBit(row) orelse continue;
+            if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - 2 - (self.x + rightmost)) != 0) return true;
         }
         return false;
     }
@@ -244,37 +271,139 @@ const Piece = struct {
     }
 };
 
-test "width" {
-    const o = Piece.maskFrom(.O, 0);
-    const i = Piece.maskFrom(.I, 0);
-    const s = Piece.maskFrom(.S, 0);
-    const z = Piece.maskFrom(.Z, 0);
-    const l = Piece.maskFrom(.L, 0);
-    const j = Piece.maskFrom(.J, 0);
-    try testing.expect(Piece.width(o) == 2);
-    try testing.expect(Piece.width(i) == 1);
-    try testing.expect(Piece.width(s) == 3);
-    try testing.expect(Piece.width(z) == 3);
-    try testing.expect(Piece.width(l) == 3);
-    try testing.expect(Piece.width(j) == 3);
+//returns the index from the left, msb being 0
+fn leftmostBit(row: u4) ?u2 {
+    const max = 3;
+    for (0..@bitSizeOf(u4)) |i| {
+        if (row & @as(u4, 1) << max - @as(u2, @intCast(i)) != 0) return @intCast(i);
+    }
+    return null;
 }
 
-test "row iterator" {
-    const o = Piece.maskFrom(.O, 0);
-    const i = Piece.maskFrom(.I, 0);
-    const s = Piece.maskFrom(.S, 0);
-    // const z: PieceKind = .Z;
-    var it = Piece.Iterator{};
-    try testing.expect(it.next(o).?.bits == 0b1100);
-    try testing.expect(it.next(o).?.bits == 0b1100);
-    try testing.expect(it.next(o) == null);
-    it = Piece.Iterator{};
-    try testing.expect(it.next(i).?.bits == 0b1000);
-    try testing.expect(it.next(i).?.bits == 0b1000);
-    it = Piece.Iterator{};
-    try testing.expect(it.next(s).?.bits == 0b0110);
-    try testing.expect(it.next(s).?.bits == 0b1100);
-    try testing.expect(it.next(s) == null);
+//returns the index from the left, msb being 0
+fn rightmostBit(row: u4) ?u2 {
+    const max = 3;
+    for (0..@bitSizeOf(u4)) |i| {
+        if (row & @as(u4, 1) << @as(u2, @intCast(i)) != 0) return @intCast(max - i);
+    }
+    return null;
+}
+
+test "mostbit" {
+    try testing.expect(leftmostBit(0b0100) == 1);
+    try testing.expect(leftmostBit(0b0111) == 1);
+    try testing.expect(leftmostBit(0b1000) == 0);
+    try testing.expect(leftmostBit(0b0001) == 3);
+    try testing.expect(leftmostBit(0b0011) == 2);
+    try testing.expect(leftmostBit(0b0000) == null);
+    try testing.expect(rightmostBit(0b0101) == 3);
+    try testing.expect(rightmostBit(0b0111) == 3);
+    try testing.expect(rightmostBit(0b1000) == 0);
+    try testing.expect(rightmostBit(0b0110) == 2);
+    try testing.expect(rightmostBit(0b1100) == 1);
+    try testing.expect(rightmostBit(0b0010) == 2);
+    try testing.expect(rightmostBit(0b0000) == null);
+}
+
+fn choice(rand: std.Random, prev: Tetr) Tetr {
+    var c: Tetr = prev;
+    while (c == prev) {
+        c = rand.enumValue(Tetr);
+    }
+    return c;
+}
+
+fn shapeWidth(shape: u16) u4 {
+    var it = ShapeRowIterator{};
+    var w: u4 = 0;
+    while (it.next(shape)) |row| {
+        var shift: u4 = 0;
+        while (shift < Tetr.side_length) : (shift += 1) {
+            if ((row >> @intCast(shift)) & @as(u10, 0b1) != 0) w = @max(Tetr.side_length - @as(u4, shift), w);
+        }
+    }
+    return w;
+}
+
+fn shapeHeight(shape: u16) u4 {
+    var height: u4 = 4;
+    for (0..@bitSizeOf(u4)) |i| {
+        if (shape & @as(u16, 0b1111) << Tetr.side_length * @as(u4, @intCast(i)) != 0) break;
+        height -= 1;
+    }
+    return height;
+}
+
+test "width" {
+    const o = Current{ .kind = .O };
+    const i = Current{ .kind = .I };
+    const s = Current{ .kind = .S };
+    const z = Current{ .kind = .Z };
+    const l = Current{ .kind = .L };
+    const j = Current{ .kind = .J };
+    const t = Current{ .kind = .T };
+    try testing.expect(o.width() == 2);
+    try testing.expect(i.width() == 1);
+    try testing.expect(s.width() == 3);
+    try testing.expect(z.width() == 3);
+    try testing.expect(l.width() == 2);
+    try testing.expect(t.width() == 3);
+    try testing.expect(j.width() == 2);
+}
+
+test "height" {
+    const o = Current{ .kind = .O };
+    const i = Current{ .kind = .I };
+    const s = Current{ .kind = .S };
+    const z = Current{ .kind = .Z };
+    const l = Current{ .kind = .L };
+    const j = Current{ .kind = .J };
+    const t = Current{ .kind = .T };
+    try testing.expect(o.height() == 2);
+    try testing.expect(i.height() == 4);
+    try testing.expect(s.height() == 2);
+    try testing.expect(z.height() == 2);
+    try testing.expect(l.height() == 3);
+    try testing.expect(t.height() == 2);
+    try testing.expect(j.height() == 3);
+}
+fn tetris() void {
+    var i = grid.len - 1;
+    var increase: f32 = 0;
+    while (i > 0) : (i -= 1) {
+        while (~grid[i] == 0) {
+            if (increase == 0) increase = 100;
+            grid[i] = 0;
+            shiftAll(i - 1);
+            increase *= compound_factor;
+        }
+    }
+    score += @round(increase);
+}
+
+test "score" {
+    score = 0;
+    const cf: f32 = 1.2 * 1.2 * 1.2 * 1.2;
+    score += @as(u32, @round(score_increase_base * cf));
+    print("score: {}\n", .{score});
+}
+
+fn shiftAll(i: usize) void {
+    if (grid[i + 1] != 0 or grid[i] == 0) return;
+    grid[i + 1] = grid[i];
+    grid[i] = 0;
+    return shiftAll(i - 1);
+}
+
+fn endGame() void {
+    screen = .end;
+}
+
+fn resetGame() void {
+    grid = @splat(0);
+    score = 0;
+    current = .new(prng, 5, 0, null);
+    current.translate();
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -287,73 +416,84 @@ pub fn main(init: std.process.Init) !void {
     var rand = std.Random.DefaultPrng.init(@intCast(std.Io.Timestamp.now(init.io, .real).toMilliseconds()));
     prng = rand.random();
 
-    current = .new(prng, 5);
-    Piece.translate(current.mask(), current.x, current.y);
+    current = .new(prng, 5, 0, null);
+    current.translate();
 
     while (!rl.windowShouldClose()) {
-        const dt = rl.getFrameTime();
-        time_since_last_fell += dt;
+        switch (screen) {
+            .game => {
+                const dt = rl.getFrameTime();
+                time_since_last_fell += dt;
 
-        if (rl.isKeyDown(.left) and current.x > 0) blk: {
-            Piece.clear(current.mask(), current.x, current.y);
-            if (current.checkLeftCollision()) {
-                Piece.translate(current.mask(), current.x, current.y);
-                break :blk;
-            }
-            current.x -= 1;
-            Piece.translate(current.mask(), current.x, current.y);
-        }
-        if (rl.isKeyDown(.right)) blk: {
-            const w = Piece.width(current.mask());
-            Piece.clear(current.mask(), current.x, current.y);
-            if (current.checkRightCollision() or current.x >= grid_width - w) {
-                Piece.translate(current.mask(), current.x, current.y);
-                break :blk;
-            }
-            current.x += 1;
-            Piece.translate(current.mask(), current.x, current.y);
-        }
-        if (rl.isKeyPressed(.up)) {
-            const prev_rot = current.rot;
-            Piece.clear(current.mask(), current.x, current.y);
-            current.rot = @as(u2, (current.rot +% 1) & 3);
-            const w = Piece.width(current.mask());
-            if (current.checkDownCollision(current.y) or current.checkLeftCollision() or current.checkRightCollision() or current.x + w > grid_width) {
-                current.rot = prev_rot;
-            }
-            Piece.translate(current.mask(), current.x, current.y);
-        }
-        if (rl.isKeyDown(.down)) current.moveDown();
+                if (rl.isKeyDown(.left) and current.x > 0) blk: {
+                    current.clear();
+                    if (current.checkLeftCollision()) {
+                        current.translate();
+                        break :blk;
+                    }
+                    current.x -= 1;
+                    current.translate();
+                }
+                if (rl.isKeyDown(.right)) blk: {
+                    if (current.x >= grid_width - current.width()) break :blk;
+                    current.clear();
+                    if (current.checkRightCollision()) {
+                        current.translate();
+                        break :blk;
+                    }
+                    current.x += 1;
+                    current.translate();
+                }
+                if (rl.isKeyDown(.down)) {
+                    current.moveDown();
+                }
+                if (rl.isKeyPressed(.up)) {
+                    current.clear();
+                    current.rotate();
+                    current.translate();
+                }
 
-        if (time_since_last_fell >= fall_tick) {
-            time_since_last_fell = 0;
-            current.moveDown();
+                if (time_since_last_fell >= fall_tick) {
+                    time_since_last_fell = 0;
+                    current.moveDown();
+                }
+
+                rl.beginDrawing();
+                defer rl.endDrawing();
+
+                rl.clearBackground(.black);
+                drawText();
+                drawGridShape();
+                drawGridValues();
+            },
+            .end => blk: {
+                rl.beginDrawing();
+                defer rl.endDrawing();
+
+                const is_input = rl.isKeyPressed(.space) or rl.isKeyPressed(.up) or rl.isKeyPressed(.right) or rl.isKeyPressed(.left) or rl.isKeyPressed(.down);
+                if (is_input) {
+                    resetGame();
+                    screen = .game;
+                    break :blk;
+                }
+                rl.clearBackground(.black);
+                drawEnd();
+            },
         }
-
-        rl.beginDrawing();
-        defer rl.endDrawing();
-
-        rl.clearBackground(.black);
-        drawGridShape();
-        drawGridValues();
     }
 }
 
-fn tetris() void {
-    var i = grid.len - 1;
-    while (i > 0) : (i -= 1) {
-        while (~grid[i] == 0) {
-            grid[i] = 0;
-            shiftAll(i - 1);
-        }
-    }
+fn drawText() void {
+    var buffer: [128]u8 = undefined;
+    const text = std.fmt.bufPrintSentinel(&buffer, "Score:\n{}", .{score}, 0) catch "Score: <error>";
+    rl.drawText(text, @intCast(screen_grid_x_off - 170), @intCast(screen_grid_y_off + 200), 40, .white);
 }
 
-fn shiftAll(i: usize) void {
-    if (grid[i + 1] != 0 or grid[i] == 0) return;
-    grid[i + 1] = grid[i];
-    grid[i] = 0;
-    shiftAll(i - 1);
+fn drawEnd() void {
+    var buffer: [128]u8 = undefined;
+    const text = std.fmt.bufPrintSentinel(&buffer, "Score:{}", .{score}, 0) catch "Score: <error>";
+    rl.drawText(text, 100, @intCast(screen_size / 2 - 100), 40, .white);
+    rl.drawText("Space to play again", 100, @intCast(screen_size / 2), 40, .white);
 }
 
 fn drawGridShape() void {
