@@ -4,6 +4,12 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const print = std.debug.print;
 
+const Screen = enum {
+    game,
+    end,
+};
+
+var screen = Screen.game;
 const screen_size = 720;
 const grid_height = 20;
 const grid_width = 10;
@@ -190,7 +196,7 @@ const Current = struct {
             self.translate();
             self.* = .new(prng, self.x, self.rot_index, self.kind);
             tetris();
-            resetGame();
+            if (grid[0] != 0) endGame();
             self.translate();
         } else {
             self.y += 1;
@@ -357,11 +363,15 @@ fn shiftAll(i: usize) void {
     return shiftAll(i - 1);
 }
 
+fn endGame() void {
+    screen = .end;
+}
+
 fn resetGame() void {
-    if (grid[0] != 0) {
-        grid = @splat(0);
-        score = 0;
-    }
+    grid = @splat(0);
+    score = 0;
+    current = .new(prng, 5, 0, null);
+    current.translate();
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -378,56 +388,80 @@ pub fn main(init: std.process.Init) !void {
     current.translate();
 
     while (!rl.windowShouldClose()) {
-        const dt = rl.getFrameTime();
-        time_since_last_fell += dt;
+        switch (screen) {
+            .game => {
+                const dt = rl.getFrameTime();
+                time_since_last_fell += dt;
 
-        if (rl.isKeyDown(.left) and current.x > 0) blk: {
-            current.clear();
-            if (current.checkLeftCollision()) {
-                current.translate();
-                break :blk;
-            }
-            current.x -= 1;
-            current.translate();
-        }
-        if (rl.isKeyDown(.right)) blk: {
-            if (current.x >= grid_width - current.width()) break :blk;
-            current.clear();
-            if (current.checkRightCollision()) {
-                current.translate();
-                break :blk;
-            }
-            current.x += 1;
-            current.translate();
-        }
-        if (rl.isKeyDown(.down)) {
-            current.moveDown();
-        }
-        if (rl.isKeyPressed(.up)) {
-            current.clear();
-            current.rotate();
-            current.translate();
-        }
+                if (rl.isKeyDown(.left) and current.x > 0) blk: {
+                    current.clear();
+                    if (current.checkLeftCollision()) {
+                        current.translate();
+                        break :blk;
+                    }
+                    current.x -= 1;
+                    current.translate();
+                }
+                if (rl.isKeyDown(.right)) blk: {
+                    if (current.x >= grid_width - current.width()) break :blk;
+                    current.clear();
+                    if (current.checkRightCollision()) {
+                        current.translate();
+                        break :blk;
+                    }
+                    current.x += 1;
+                    current.translate();
+                }
+                if (rl.isKeyDown(.down)) {
+                    current.moveDown();
+                }
+                if (rl.isKeyPressed(.up)) {
+                    current.clear();
+                    current.rotate();
+                    current.translate();
+                }
 
-        if (time_since_last_fell >= fall_tick) {
-            time_since_last_fell = 0;
-            current.moveDown();
+                if (time_since_last_fell >= fall_tick) {
+                    time_since_last_fell = 0;
+                    current.moveDown();
+                }
+
+                rl.beginDrawing();
+                defer rl.endDrawing();
+
+                rl.clearBackground(.black);
+                drawText();
+                drawGridShape();
+                drawGridValues();
+            },
+            .end => blk: {
+                rl.beginDrawing();
+                defer rl.endDrawing();
+
+                const is_input = rl.isKeyPressed(.space) or rl.isKeyPressed(.up) or rl.isKeyPressed(.right) or rl.isKeyPressed(.left) or rl.isKeyPressed(.down);
+                if (is_input) {
+                    resetGame();
+                    screen = .game;
+                    break :blk;
+                }
+                rl.clearBackground(.black);
+                drawEnd();
+            },
         }
-
-        rl.beginDrawing();
-        defer rl.endDrawing();
-
-        rl.clearBackground(.black);
-        drawText();
-        drawGridShape();
-        drawGridValues();
     }
 }
 
 fn drawText() void {
     var buffer: [128]u8 = undefined;
     const text = std.fmt.bufPrintSentinel(&buffer, "Score:\n{}", .{score}, 0) catch "Score: <error>";
-    rl.drawText(text, @intCast(screen_grid_x_off - 170), @intCast(screen_grid_y_off + 200), @intCast(40), .white);
+    rl.drawText(text, @intCast(screen_grid_x_off - 170), @intCast(screen_grid_y_off + 200), 40, .white);
+}
+
+fn drawEnd() void {
+    var buffer: [128]u8 = undefined;
+    const text = std.fmt.bufPrintSentinel(&buffer, "Score:{}", .{score}, 0) catch "Score: <error>";
+    rl.drawText(text, 100, @intCast(screen_size / 2 - 100), 40, .white);
+    rl.drawText("Space to play again", 100, @intCast(screen_size / 2), 40, .white);
 }
 
 fn drawGridShape() void {
