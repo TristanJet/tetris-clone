@@ -204,14 +204,58 @@ const Current = struct {
         var it = ShapeRowIterator{};
         const s = self.shape();
         while (it.next(s)) |row| {
-            if (row & (@as(u4, 1) << 3) == 0) continue;
+            const leftmost = leftmostBit(row) orelse continue;
             print("grid row: {b}\n", .{grid[self.y + it.index - 1]});
             print("x: {}\n", .{self.x - 1});
-            if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - self.x) != 0) return true;
+            if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - (self.x + leftmost)) != 0) return true;
+        }
+        return false;
+    }
+
+    fn checkRightCollision(self: Current) bool {
+        var it = ShapeRowIterator{};
+        const s = self.shape();
+        while (it.next(s)) |row| {
+            const rightmost = rightmostBit(row) orelse continue;
+            if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - 2 - (self.x + rightmost)) != 0) return true;
         }
         return false;
     }
 };
+
+//returns the index from the left, msb being 0
+fn leftmostBit(row: u4) ?u2 {
+    const max = 3;
+    for (0..@bitSizeOf(u4)) |i| {
+        if (row & @as(u4, 1) << max - @as(u2, @intCast(i)) != 0) return @intCast(i);
+    }
+    return null;
+}
+
+//returns the index from the left, msb being 0
+fn rightmostBit(row: u4) ?u2 {
+    const max = 3;
+    for (0..@bitSizeOf(u4)) |i| {
+        if (row & @as(u4, 1) << @as(u2, @intCast(i)) != 0) return @intCast(max - i);
+    }
+    return null;
+}
+
+test "mostbit" {
+    try testing.expect(leftmostBit(0b0100) == 1);
+    try testing.expect(leftmostBit(0b0111) == 1);
+    try testing.expect(leftmostBit(0b1000) == 0);
+    try testing.expect(leftmostBit(0b0001) == 3);
+    try testing.expect(leftmostBit(0b0011) == 2);
+    try testing.expect(leftmostBit(0b0000) == null);
+    try testing.expect(rightmostBit(0b0101) == 3);
+    try testing.expect(rightmostBit(0b0111) == 3);
+    try testing.expect(rightmostBit(0b1000) == 0);
+    try testing.expect(rightmostBit(0b0110) == 2);
+    try testing.expect(rightmostBit(0b1100) == 1);
+    try testing.expect(rightmostBit(0b0010) == 2);
+    try testing.expect(rightmostBit(0b0000) == null);
+}
 
 fn choice(rand: std.Random, prev: Tetr) Tetr {
     var c: Tetr = prev;
@@ -279,6 +323,10 @@ pub fn main(init: std.process.Init) !void {
         if (rl.isKeyDown(.right)) blk: {
             if (current.x >= grid_width - current.width()) break :blk;
             current.clear();
+            if (current.checkRightCollision()) {
+                current.translate();
+                break :blk;
+            }
             current.x += 1;
             current.translate();
         }
