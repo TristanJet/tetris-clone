@@ -130,8 +130,8 @@ const Current = struct {
     x: u4 = 0,
     y: u8 = 0,
 
-    fn new(rng: std.Random, x: u4, rot_i: u2) Current {
-        const kind = rng.enumValue(Tetr); // cannot repeat
+    fn new(rng: std.Random, x: u4, rot_i: u2, prev_tetr: ?Tetr) Current {
+        const kind = if (prev_tetr) |prev| choice(rng, prev) else rng.enumValue(Tetr);
         const w = shapeWidth(kind.rotation(rot_i));
         return .{
             .kind = kind,
@@ -179,7 +179,7 @@ const Current = struct {
         self.clear();
         if (self.checkDownCollision(self.y + 1)) {
             self.translate();
-            self.* = .new(prng, self.x, self.rot_index);
+            self.* = .new(prng, self.x, self.rot_index, self.kind);
             tetris();
             self.translate();
         } else {
@@ -199,6 +199,14 @@ const Current = struct {
         return false;
     }
 };
+
+fn choice(rand: std.Random, prev: Tetr) Tetr {
+    var c: Tetr = prev;
+    while (c == prev) {
+        c = rand.enumValue(Tetr);
+    }
+    return c;
+}
 
 fn shapeWidth(shape: u16) u4 {
     var it = ShapeRowIterator{};
@@ -239,7 +247,7 @@ pub fn main(init: std.process.Init) !void {
     var rand = std.Random.DefaultPrng.init(@intCast(std.Io.Timestamp.now(init.io, .real).toMilliseconds()));
     prng = rand.random();
 
-    current = .new(prng, 5, 0);
+    current = .new(prng, 5, 0, null);
     current.translate();
 
     while (!rl.windowShouldClose()) {
