@@ -190,11 +190,24 @@ const Current = struct {
 
     fn checkDownCollision(self: Current, next_y: u8) bool {
         var it = ShapeRowIterator{};
-        while (it.next(self.shape())) |row| {
+        const s = self.shape();
+        while (it.next(s)) |row| {
             if (next_y + it.index > grid_height) return true;
             const shift_i: i8 = (@as(i8, @intCast(grid_width)) - 4) - self.x;
             const shape_mask = if (shift_i >= 0) @as(u10, row) << @intCast(shift_i) else @as(u10, row) >> @intCast(@abs(shift_i));
             if (grid[next_y + it.index - 1] & shape_mask != 0) return true;
+        }
+        return false;
+    }
+
+    fn checkLeftCollision(self: Current) bool {
+        var it = ShapeRowIterator{};
+        const s = self.shape();
+        while (it.next(s)) |row| {
+            if (row & (@as(u4, 1) << 3) == 0) continue;
+            print("grid row: {b}\n", .{grid[self.y + it.index - 1]});
+            print("x: {}\n", .{self.x - 1});
+            if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - self.x) != 0) return true;
         }
         return false;
     }
@@ -254,8 +267,12 @@ pub fn main(init: std.process.Init) !void {
         const dt = rl.getFrameTime();
         time_since_last_fell += dt;
 
-        if (rl.isKeyDown(.left) and current.x > 0) {
+        if (rl.isKeyDown(.left) and current.x > 0) blk: {
             current.clear();
+            if (current.checkLeftCollision()) {
+                current.translate();
+                break :blk;
+            }
             current.x -= 1;
             current.translate();
         }
