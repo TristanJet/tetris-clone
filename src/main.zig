@@ -16,12 +16,16 @@ const grid_width = 10;
 const cell_size = 34;
 const line_thick = 2;
 
+var click: rl.Sound = undefined;
+var beepboop: rl.Sound = undefined;
+var fin: rl.Sound = undefined;
+
 const screen_grid_x_off = (screen_size - (grid_width * cell_size)) / 2;
 const screen_grid_y_off = (screen_size - (grid_height * cell_size)) / 2;
 
 const fall_tick = 0.3; //fall every x seconds
 var time_since_last_fell: f32 = 0;
-var current: Piece = undefined;
+var current: Current = undefined;
 
 var score: u32 = 0;
 const score_increase_base: f32 = 100;
@@ -221,8 +225,6 @@ const Current = struct {
         const s = self.shape();
         while (it.next(s)) |row| {
             const leftmost = leftmostBit(row) orelse continue;
-            print("grid row: {b}\n", .{grid[self.y + it.index - 1]});
-            print("x: {}\n", .{self.x - 1});
             if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - (self.x + leftmost)) != 0) return true;
         }
         return false;
@@ -234,38 +236,6 @@ const Current = struct {
         while (it.next(s)) |row| {
             const rightmost = rightmostBit(row) orelse continue;
             if (grid[self.y + it.index - 1] & @as(u10, 1) << (grid_width - 2 - (self.x + rightmost)) != 0) return true;
-        }
-        return false;
-    }
-
-    fn checkLeftCollision(self: Piece) bool {
-        var it = Iterator{};
-        const shape = self.mask();
-        while (it.next(shape)) |row| {
-            const y_row = self.y + row.height - 1;
-            const shift_i: i16 = (@as(i16, grid_width) - 4) - @as(i16, self.x);
-            const shape_mask = if (shift_i >= 0)
-                @as(u10, row.bits) << @intCast(shift_i)
-            else
-                @as(u10, row.bits) >> @intCast(-shift_i);
-            if ((shape_mask & (@as(u10, 1) << (grid_width - 1))) != 0) return true;
-            if ((grid[y_row] & (shape_mask << 1)) != 0) return true;
-        }
-        return false;
-    }
-
-    fn checkRightCollision(self: Piece) bool {
-        var it = Iterator{};
-        const shape = self.mask();
-        while (it.next(shape)) |row| {
-            const y_row = self.y + row.height - 1;
-            const shift_i: i16 = (@as(i16, grid_width) - 4) - @as(i16, self.x);
-            const shape_mask = if (shift_i >= 0)
-                @as(u10, row.bits) << @intCast(shift_i)
-            else
-                @as(u10, row.bits) >> @intCast(-shift_i);
-            if ((shape_mask & @as(u10, 1)) != 0) return true;
-            if ((grid[y_row] & (shape_mask >> 1)) != 0) return true;
         }
         return false;
     }
@@ -378,6 +348,7 @@ fn tetris() void {
             increase *= compound_factor;
         }
     }
+    if (increase == 0) rl.playSound(click) else rl.playSound(beepboop);
     score += @round(increase);
 }
 
@@ -396,6 +367,7 @@ fn shiftAll(i: usize) void {
 }
 
 fn endGame() void {
+    rl.playSound(fin);
     screen = .end;
 }
 
@@ -412,6 +384,13 @@ pub fn main(init: std.process.Init) !void {
 
     rl.setTargetFPS(15);
     rl.setWindowPosition(0, 0);
+
+    rl.initAudioDevice();
+    defer rl.closeAudioDevice();
+
+    click = try rl.loadSound("resources/click.wav");
+    beepboop = try rl.loadSound("resources/beepboop.wav");
+    fin = try rl.loadSound("resources/wiggle.wav");
 
     var rand = std.Random.DefaultPrng.init(@intCast(std.Io.Timestamp.now(init.io, .real).toMilliseconds()));
     prng = rand.random();
