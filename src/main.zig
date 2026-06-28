@@ -106,24 +106,6 @@ test "row iterator" {
     try testing.expect(l.shape() == Tetr.rot_table.L[3]);
     try testing.expect(l.width() == 3);
 }
-
-test "width" {
-    const o = Current{ .kind = .O };
-    const i = Current{ .kind = .I };
-    const s = Current{ .kind = .S };
-    const z = Current{ .kind = .Z };
-    const l = Current{ .kind = .L };
-    const j = Current{ .kind = .J };
-    const t = Current{ .kind = .T };
-    try testing.expect(o.width() == 2);
-    try testing.expect(i.width() == 1);
-    try testing.expect(s.width() == 3);
-    try testing.expect(z.width() == 3);
-    try testing.expect(l.width() == 2);
-    try testing.expect(t.width() == 3);
-    try testing.expect(j.width() == 2);
-}
-
 const Current = struct {
     kind: Tetr,
     rot_index: u2 = 0,
@@ -145,7 +127,21 @@ const Current = struct {
         return self.kind.rotation(self.rot_index);
     }
 
+    fn isOverlapping(self: Current) bool {
+        var rot = self;
+        rot.rot_index +%= 1;
+        const s = rot.shape();
+        if (rot.x + rot.width() > grid_width) return true;
+        if (rot.y + rot.height() > grid_height) return true;
+        var shape_it = ShapeRowIterator{};
+        for (0..Tetr.side_length) |i| {
+            const shape_row = shape_it.next(s) orelse continue;
+            if (grid[rot.y + i] & (@as(u10, shape_row) << grid_width - 1 - self.x) != 0) return true;
+        }
+        return false;
+    }
     fn rotate(self: *Current) void {
+        if (self.isOverlapping()) return;
         self.rot_index +%= 1;
     }
 
@@ -173,6 +169,10 @@ const Current = struct {
 
     fn width(self: Current) u4 {
         return shapeWidth(self.shape());
+    }
+
+    fn height(self: Current) u4 {
+        return shapeHeight(self.shape());
     }
 
     fn moveDown(self: *Current) void {
@@ -211,7 +211,7 @@ const Current = struct {
         }
         return false;
     }
-
+    //why does this need magic value 2?
     fn checkRightCollision(self: Current) bool {
         var it = ShapeRowIterator{};
         const s = self.shape();
@@ -277,6 +277,48 @@ fn shapeWidth(shape: u16) u4 {
     return w;
 }
 
+fn shapeHeight(shape: u16) u4 {
+    var height: u4 = 4;
+    for (0..@bitSizeOf(u4)) |i| {
+        if (shape & @as(u16, 0b1111) << Tetr.side_length * @as(u4, @intCast(i)) != 0) break;
+        height -= 1;
+    }
+    return height;
+}
+
+test "width" {
+    const o = Current{ .kind = .O };
+    const i = Current{ .kind = .I };
+    const s = Current{ .kind = .S };
+    const z = Current{ .kind = .Z };
+    const l = Current{ .kind = .L };
+    const j = Current{ .kind = .J };
+    const t = Current{ .kind = .T };
+    try testing.expect(o.width() == 2);
+    try testing.expect(i.width() == 1);
+    try testing.expect(s.width() == 3);
+    try testing.expect(z.width() == 3);
+    try testing.expect(l.width() == 2);
+    try testing.expect(t.width() == 3);
+    try testing.expect(j.width() == 2);
+}
+
+test "height" {
+    const o = Current{ .kind = .O };
+    const i = Current{ .kind = .I };
+    const s = Current{ .kind = .S };
+    const z = Current{ .kind = .Z };
+    const l = Current{ .kind = .L };
+    const j = Current{ .kind = .J };
+    const t = Current{ .kind = .T };
+    try testing.expect(o.height() == 2);
+    try testing.expect(i.height() == 4);
+    try testing.expect(s.height() == 2);
+    try testing.expect(z.height() == 2);
+    try testing.expect(l.height() == 3);
+    try testing.expect(t.height() == 2);
+    try testing.expect(j.height() == 3);
+}
 fn tetris() void {
     var i = grid.len - 1;
     while (i > 0) : (i -= 1) {
