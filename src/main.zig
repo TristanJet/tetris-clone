@@ -32,8 +32,8 @@ var time_since_last_fell: f32 = 0;
 var current: Current = undefined;
 
 var score: u32 = 0;
-const score_increase_base: f32 = 100;
-const compound_factor: f32 = 1.2;
+const score_increase_base: f32 = 50;
+const compound_factor: f32 = 2.05;
 
 var prng: std.Random = undefined;
 
